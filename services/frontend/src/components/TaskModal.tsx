@@ -35,7 +35,7 @@ export default function TaskModal(props: Props) {
 
   const [title, setTitle] = useState(task?.title ?? '')
   const [description, setDescription] = useState(task?.description ?? '')
-  const [deadline, setDeadline] = useState(task?.deadline ? task.deadline.slice(0, 16) : '')
+  const [deadline, setDeadline] = useState(task?.deadline ? task.deadline.slice(0, 10) : '')
   const [priority, setPriority] = useState<Priority>(task?.priority ?? 'medium')
   const [subtasks, setSubtasks] = useState<Subtask[]>([])
   const [newSubtaskTitle, setNewSubtaskTitle] = useState('')
@@ -46,7 +46,7 @@ export default function TaskModal(props: Props) {
     if (!props.open) return
     setTitle(task?.title ?? '')
     setDescription(task?.description ?? '')
-    setDeadline(task?.deadline ? task.deadline.slice(0, 16) : '')
+    setDeadline(task?.deadline ? task.deadline.slice(0, 10) : '')
     setPriority(task?.priority ?? 'medium')
     setError('')
     setNewSubtaskTitle('')
@@ -66,7 +66,7 @@ export default function TaskModal(props: Props) {
         const patch: Record<string, unknown> = { title: title.trim(), priority }
         if (description.trim()) patch.description = description.trim()
         else patch.clear_description = true
-        if (deadline) patch.deadline = new Date(deadline).toISOString()
+        if (deadline) patch.deadline = deadline + 'T00:00:00.000Z'
         else patch.clear_deadline = true
         const updated = await api.updateTask(task.id, patch)
         props.onUpdated(updated)
@@ -75,7 +75,7 @@ export default function TaskModal(props: Props) {
           title: title.trim(),
           priority,
           ...(description.trim() ? { description: description.trim() } : {}),
-          ...(deadline ? { deadline: new Date(deadline).toISOString() } : {}),
+          ...(deadline ? { deadline: deadline + 'T00:00:00.000Z' } : {}),
         })
         props.onCreated(created)
         props.onClose()
@@ -173,7 +173,7 @@ export default function TaskModal(props: Props) {
                 <Calendar className="h-3.5 w-3.5" /> Deadline
               </Label>
               <Input
-                type="datetime-local"
+                type="date"
                 value={deadline}
                 onChange={e => setDeadline(e.target.value)}
               />
