@@ -37,15 +37,19 @@ CREATE TABLE IF NOT EXISTS tasks (
 );
 
 CREATE TABLE IF NOT EXISTS subtasks (
-  id             SERIAL PRIMARY KEY,
-  parent_task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-  title          VARCHAR(200) NOT NULL,
-  completed      BOOLEAN NOT NULL DEFAULT FALSE,
-  position       INTEGER NOT NULL,
-  created_at     TIMESTAMP DEFAULT NOW()
+  id               SERIAL PRIMARY KEY,
+  parent_task_id   INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  title            VARCHAR(200) NOT NULL,
+  description      TEXT,
+  assigned_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  deadline         TIMESTAMP,
+  completed        BOOLEAN NOT NULL DEFAULT FALSE,
+  position         INTEGER NOT NULL,
+  created_at       TIMESTAMP DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_boards_owner    ON boards(owner_id);
-CREATE INDEX IF NOT EXISTS idx_columns_board   ON board_columns(board_id);
-CREATE INDEX IF NOT EXISTS idx_tasks_column    ON tasks(column_id);
-CREATE INDEX IF NOT EXISTS idx_subtasks_parent ON subtasks(parent_task_id);
+CREATE INDEX IF NOT EXISTS idx_boards_owner        ON boards(owner_id);
+CREATE INDEX IF NOT EXISTS idx_columns_board       ON board_columns(board_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_column        ON tasks(column_id);
+CREATE INDEX IF NOT EXISTS idx_subtasks_parent     ON subtasks(parent_task_id);
+CREATE INDEX IF NOT EXISTS idx_subtasks_assignee   ON subtasks(assigned_user_id);
