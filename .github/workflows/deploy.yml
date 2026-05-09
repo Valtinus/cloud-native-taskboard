@@ -1,0 +1,98 @@
+name: Build & Deploy
+
+on:
+  push:
+    branches: [main]
+    paths: ["services/**"]
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  REGION: europe-west1
+  PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+  REGISTRY: europe-west1-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/taskboard
+  CLUSTER: taskboard-cluster
+
+jobs:
+  detect-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      users: ${{ steps.filter.outputs.users }}
+      tasks: ${{ steps.filter.outputs.tasks }}
+      gateway: ${{ steps.filter.outputs.gateway }}
+      frontend: ${{ steps.filter.outputs.frontend }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            users:
+              - 'services/users-service/**'
+            tasks:
+              - 'services/tasks-service/**'
+            gateway:
+              - 'services/api-gateway/**'
+            frontend:
+              - 'services/frontend/**'
+
+  build-deploy:
+    needs: detect-changes
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - service: users-service
+            changed: ${{ needs.detect-changes.outputs.users }}
+          - service: tasks-service
+            changed: ${{ needs.detect-changes.outputs.tasks }}
+          - service: api-gateway
+            changed: ${{ needs.detect-changes.outputs.gateway }}
+          - service: frontend
+            changed: ${{ needs.detect-changes.outputs.frontend }}
+
+    steps:
+      - uses: actions/checkout@v4
+        if: matrix.changed == 'true'
+
+      - name: Authenticate to GCP
+        if: matrix.changed == 'true'
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.DEPLOYER_SA }}
+
+      - name: Configure Docker for Artifact Registry
+        if: matrix.changed == 'true'
+        run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
+
+      - name: Run Go tests
+        if: matrix.changed == 'true' && matrix.service != 'frontend'
+        working-directory: services/${{ matrix.service }}
+        run: go test ./...
+
+      - name: Build & push image
+        if: matrix.changed == 'true'
+        run: |
+          IMAGE="${{ env.REGISTRY }}/${{ matrix.service }}:${{ github.sha }}"
+          docker build -t "$IMAGE" services/${{ matrix.service }}
+          docker push "$IMAGE"
+
+      - name: Get GKE credentials
+        if: matrix.changed == 'true'
+        uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: ${{ env.CLUSTER }}
+          location: ${{ env.REGION }}
+
+      - name: Deploy to GKE
+        if: matrix.changed == 'true'
+        run: |
+          IMAGE="${{ env.REGISTRY }}/${{ matrix.service }}:${{ github.sha }}"
+          kubectl set image deployment/${{ matrix.service }} \
+            ${{ matrix.service }}="$IMAGE" \
+            -n taskboard
+          kubectl rollout status deployment/${{ matrix.service }} \
+            -n taskboard --timeout=5m
