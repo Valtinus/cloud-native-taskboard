@@ -17,9 +17,19 @@ type Task struct {
 	Description    *string    `json:"description"`
 	AssignedUserID *int       `json:"assigned_user_id"`
 	Deadline       *time.Time `json:"deadline"`
+	Priority       string     `json:"priority"`
 	Position       int        `json:"position"`
 	CreatedAt      time.Time  `json:"created_at"`
 }
+
+const taskCols = `id, column_id, title, description, assigned_user_id, deadline, priority, position, created_at`
+
+func scanTask(row interface{ Scan(...any) error }, t *Task) error {
+	return row.Scan(&t.ID, &t.ColumnID, &t.Title, &t.Description,
+		&t.AssignedUserID, &t.Deadline, &t.Priority, &t.Position, &t.CreatedAt)
+}
+
+var validPriorities = map[string]bool{"low": true, "medium": true, "high": true}
 
 func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
 	uid, ok := callerID(r)
@@ -38,8 +48,7 @@ func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rows, err := s.DB.Query(r.Context(),
-		`SELECT id, column_id, title, description, assigned_user_id, deadline, position, created_at
-		 FROM tasks WHERE column_id = $1 ORDER BY position`, columnID)
+		`SELECT `+taskCols+` FROM tasks WHERE column_id = $1 ORDER BY position`, columnID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
@@ -49,8 +58,7 @@ func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
 	tasks := []Task{}
 	for rows.Next() {
 		var t Task
-		rows.Scan(&t.ID, &t.ColumnID, &t.Title, &t.Description,
-			&t.AssignedUserID, &t.Deadline, &t.Position, &t.CreatedAt)
+		scanTask(rows, &t)
 		tasks = append(tasks, t)
 	}
 	writeJSON(w, http.StatusOK, tasks)
@@ -78,9 +86,17 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 		Description    *string    `json:"description"`
 		AssignedUserID *int       `json:"assigned_user_id"`
 		Deadline       *time.Time `json:"deadline"`
+		Priority       string     `json:"priority"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Title == "" {
 		writeError(w, http.StatusBadRequest, "title required")
+		return
+	}
+	if req.Priority == "" {
+		req.Priority = "medium"
+	}
+	if !validPriorities[req.Priority] {
+		writeError(w, http.StatusBadRequest, "priority must be low, medium, or high")
 		return
 	}
 	if req.AssignedUserID != nil && !s.validateAssignee(r.Context(), *req.AssignedUserID) {
@@ -95,13 +111,12 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var t Task
-	err = s.DB.QueryRow(r.Context(),
-		`INSERT INTO tasks (column_id, title, description, assigned_user_id, deadline, position)
-		 VALUES ($1, $2, $3, $4, $5, $6)
-		 RETURNING id, column_id, title, description, assigned_user_id, deadline, position, created_at`,
-		columnID, req.Title, req.Description, req.AssignedUserID, req.Deadline, pos,
-	).Scan(&t.ID, &t.ColumnID, &t.Title, &t.Description,
-		&t.AssignedUserID, &t.Deadline, &t.Position, &t.CreatedAt)
+	err = scanTask(s.DB.QueryRow(r.Context(),
+		`INSERT INTO tasks (column_id, title, description, assigned_user_id, deadline, priority, position)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7)
+		 RETURNING `+taskCols,
+		columnID, req.Title, req.Description, req.AssignedUserID, req.Deadline, req.Priority, pos,
+	), &t)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
@@ -126,11 +141,9 @@ func (s *Server) getTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var t Task
-	s.DB.QueryRow(r.Context(),
-		`SELECT id, column_id, title, description, assigned_user_id, deadline, position, created_at
-		 FROM tasks WHERE id = $1`, id,
-	).Scan(&t.ID, &t.ColumnID, &t.Title, &t.Description,
-		&t.AssignedUserID, &t.Deadline, &t.Position, &t.CreatedAt)
+	scanTask(s.DB.QueryRow(r.Context(),
+		`SELECT `+taskCols+` FROM tasks WHERE id = $1`, id,
+	), &t)
 	writeJSON(w, http.StatusOK, t)
 }
 
@@ -159,11 +172,16 @@ func (s *Server) updateTask(w http.ResponseWriter, r *http.Request) {
 		ClearAssignee  bool       `json:"clear_assignee"`
 		Deadline       *time.Time `json:"deadline"`
 		ClearDeadline  bool       `json:"clear_deadline"`
+		Priority       *string    `json:"priority"`
 		ColumnID       *int       `json:"column_id"`
 		Position       *int       `json:"position"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if req.Priority != nil && !validPriorities[*req.Priority] {
+		writeError(w, http.StatusBadRequest, "priority must be low, medium, or high")
 		return
 	}
 	if req.AssignedUserID != nil && !s.validateAssignee(r.Context(), *req.AssignedUserID) {
@@ -197,6 +215,9 @@ func (s *Server) updateTask(w http.ResponseWriter, r *http.Request) {
 	} else if req.Deadline != nil {
 		s.DB.Exec(ctx, `UPDATE tasks SET deadline = $1 WHERE id = $2`, *req.Deadline, id)
 	}
+	if req.Priority != nil {
+		s.DB.Exec(ctx, `UPDATE tasks SET priority = $1 WHERE id = $2`, *req.Priority, id)
+	}
 	if req.ColumnID != nil {
 		s.DB.Exec(ctx, `UPDATE tasks SET column_id = $1 WHERE id = $2`, *req.ColumnID, id)
 	}
@@ -205,11 +226,7 @@ func (s *Server) updateTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var t Task
-	s.DB.QueryRow(ctx,
-		`SELECT id, column_id, title, description, assigned_user_id, deadline, position, created_at
-		 FROM tasks WHERE id = $1`, id,
-	).Scan(&t.ID, &t.ColumnID, &t.Title, &t.Description,
-		&t.AssignedUserID, &t.Deadline, &t.Position, &t.CreatedAt)
+	scanTask(s.DB.QueryRow(ctx, `SELECT `+taskCols+` FROM tasks WHERE id = $1`, id), &t)
 	writeJSON(w, http.StatusOK, t)
 }
 

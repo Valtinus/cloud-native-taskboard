@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS board_columns (
   id         SERIAL PRIMARY KEY,
   board_id   INTEGER NOT NULL REFERENCES boards(id) ON DELETE CASCADE,
   name       VARCHAR(50) NOT NULL,
+  color      VARCHAR(20),
   position   INTEGER NOT NULL,
   created_at TIMESTAMP DEFAULT NOW(),
   UNIQUE (board_id, position)
@@ -41,6 +42,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   description      TEXT,
   assigned_user_id INTEGER,
   deadline         TIMESTAMP,
+  priority         VARCHAR(10) NOT NULL DEFAULT 'medium',
   position         INTEGER NOT NULL,
   created_at       TIMESTAMP DEFAULT NOW()
 );
@@ -62,6 +64,10 @@ CREATE INDEX IF NOT EXISTS idx_columns_board     ON board_columns(board_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_column      ON tasks(column_id);
 CREATE INDEX IF NOT EXISTS idx_subtasks_parent   ON subtasks(parent_task_id);
 CREATE INDEX IF NOT EXISTS idx_subtasks_assignee ON subtasks(assigned_user_id);
+
+-- Idempotent upgrades for existing databases
+ALTER TABLE board_columns ADD COLUMN IF NOT EXISTS color VARCHAR(20);
+ALTER TABLE tasks         ADD COLUMN IF NOT EXISTS priority VARCHAR(10) NOT NULL DEFAULT 'medium';
 `
 
 func (s *Server) Migrate(ctx context.Context) error {

@@ -14,8 +14,15 @@ type Column struct {
 	ID        int       `json:"id"`
 	BoardID   int       `json:"board_id"`
 	Name      string    `json:"name"`
+	Color     *string   `json:"color"`
 	Position  int       `json:"position"`
 	CreatedAt time.Time `json:"created_at"`
+}
+
+const colCols = `id, board_id, name, color, position, created_at`
+
+func scanColumn(row interface{ Scan(...any) error }, c *Column) error {
+	return row.Scan(&c.ID, &c.BoardID, &c.Name, &c.Color, &c.Position, &c.CreatedAt)
 }
 
 func (s *Server) listColumns(w http.ResponseWriter, r *http.Request) {
@@ -35,8 +42,7 @@ func (s *Server) listColumns(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rows, err := s.DB.Query(r.Context(),
-		`SELECT id, board_id, name, position, created_at
-		 FROM board_columns WHERE board_id = $1 ORDER BY position`, boardID)
+		`SELECT `+colCols+` FROM board_columns WHERE board_id = $1 ORDER BY position`, boardID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
@@ -46,7 +52,7 @@ func (s *Server) listColumns(w http.ResponseWriter, r *http.Request) {
 	cols := []Column{}
 	for rows.Next() {
 		var c Column
-		rows.Scan(&c.ID, &c.BoardID, &c.Name, &c.Position, &c.CreatedAt)
+		scanColumn(rows, &c)
 		cols = append(cols, c)
 	}
 	writeJSON(w, http.StatusOK, cols)
@@ -80,7 +86,8 @@ func (s *Server) createColumn(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Name string `json:"name"`
+		Name  string  `json:"name"`
+		Color *string `json:"color"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Name == "" {
 		writeError(w, http.StatusBadRequest, "name required")
@@ -98,11 +105,11 @@ func (s *Server) createColumn(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var c Column
-	s.DB.QueryRow(r.Context(),
-		`INSERT INTO board_columns (board_id, name, position) VALUES ($1, $2, $3)
-		 RETURNING id, board_id, name, position, created_at`,
-		boardID, req.Name, pos,
-	).Scan(&c.ID, &c.BoardID, &c.Name, &c.Position, &c.CreatedAt)
+	scanColumn(s.DB.QueryRow(r.Context(),
+		`INSERT INTO board_columns (board_id, name, color, position) VALUES ($1, $2, $3, $4)
+		 RETURNING `+colCols,
+		boardID, req.Name, req.Color, pos,
+	), &c)
 	writeJSON(w, http.StatusCreated, c)
 }
 
@@ -124,8 +131,10 @@ func (s *Server) updateColumn(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Name     *string `json:"name"`
-		Position *int    `json:"position"`
+		Name       *string `json:"name"`
+		Color      *string `json:"color"`
+		ClearColor bool    `json:"clear_color"`
+		Position   *int    `json:"position"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid json")
@@ -138,6 +147,11 @@ func (s *Server) updateColumn(w http.ResponseWriter, r *http.Request) {
 		}
 		s.DB.Exec(r.Context(), `UPDATE board_columns SET name = $1 WHERE id = $2`, *req.Name, id)
 	}
+	if req.ClearColor {
+		s.DB.Exec(r.Context(), `UPDATE board_columns SET color = NULL WHERE id = $1`, id)
+	} else if req.Color != nil {
+		s.DB.Exec(r.Context(), `UPDATE board_columns SET color = $1 WHERE id = $2`, *req.Color, id)
+	}
 	if req.Position != nil {
 		if err := s.reorderColumns(r.Context(), boardID, id, *req.Position); err != nil {
 			writeError(w, http.StatusInternalServerError, "internal error")
@@ -146,9 +160,9 @@ func (s *Server) updateColumn(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var c Column
-	s.DB.QueryRow(r.Context(),
-		`SELECT id, board_id, name, position, created_at FROM board_columns WHERE id = $1`, id,
-	).Scan(&c.ID, &c.BoardID, &c.Name, &c.Position, &c.CreatedAt)
+	scanColumn(s.DB.QueryRow(r.Context(),
+		`SELECT `+colCols+` FROM board_columns WHERE id = $1`, id,
+	), &c)
 	writeJSON(w, http.StatusOK, c)
 }
 

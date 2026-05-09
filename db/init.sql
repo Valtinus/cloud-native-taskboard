@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS board_columns (
   id         SERIAL PRIMARY KEY,
   board_id   INTEGER NOT NULL REFERENCES boards(id) ON DELETE CASCADE,
   name       VARCHAR(50) NOT NULL,
+  color      VARCHAR(20),
   position   INTEGER NOT NULL,
   created_at TIMESTAMP DEFAULT NOW(),
   UNIQUE (board_id, position)
@@ -32,6 +33,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   description      TEXT,
   assigned_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
   deadline         TIMESTAMP,
+  priority         VARCHAR(10) NOT NULL DEFAULT 'medium',
   position         INTEGER NOT NULL,
   created_at       TIMESTAMP DEFAULT NOW()
 );
