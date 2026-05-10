@@ -38,7 +38,7 @@ jobs:
             frontend:
               - 'services/frontend/**'
 
-  build-deploy:
+  test:
     needs: detect-changes
     runs-on: ubuntu-latest
     services:
@@ -64,26 +64,11 @@ jobs:
             changed: ${{ needs.detect-changes.outputs.tasks }}
           - service: api-gateway
             changed: ${{ needs.detect-changes.outputs.gateway }}
-          - service: frontend
-            changed: ${{ needs.detect-changes.outputs.frontend }}
-
     steps:
       - uses: actions/checkout@v4
         if: matrix.changed == 'true'
-
-      - name: Authenticate to GCP
-        if: matrix.changed == 'true'
-        uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
-          service_account: ${{ vars.DEPLOYER_SA }}
-
-      - name: Configure Docker for Artifact Registry
-        if: matrix.changed == 'true'
-        run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
-
       - name: Run Go tests
-        if: matrix.changed == 'true' && matrix.service != 'frontend'
+        if: matrix.changed == 'true'
         working-directory: services/${{ matrix.service }}
         env:
           TEST_DB_HOST: localhost
@@ -93,6 +78,32 @@ jobs:
           TEST_DB_PASSWORD: test
         run: go test ./...
 
+  build:
+    needs: [detect-changes, test]
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - service: users-service
+            changed: ${{ needs.detect-changes.outputs.users }}
+          - service: tasks-service
+            changed: ${{ needs.detect-changes.outputs.tasks }}
+          - service: api-gateway
+            changed: ${{ needs.detect-changes.outputs.gateway }}
+          - service: frontend
+            changed: ${{ needs.detect-changes.outputs.frontend }}
+    steps:
+      - uses: actions/checkout@v4
+        if: matrix.changed == 'true'
+      - name: Authenticate to GCP
+        if: matrix.changed == 'true'
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.DEPLOYER_SA }}
+      - name: Configure Docker for Artifact Registry
+        if: matrix.changed == 'true'
+        run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
       - name: Build & push image
         if: matrix.changed == 'true'
         run: |
@@ -100,13 +111,33 @@ jobs:
           docker build -t "$IMAGE" services/${{ matrix.service }}
           docker push "$IMAGE"
 
+  deploy:
+    needs: [detect-changes, build]
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - service: users-service
+            changed: ${{ needs.detect-changes.outputs.users }}
+          - service: tasks-service
+            changed: ${{ needs.detect-changes.outputs.tasks }}
+          - service: api-gateway
+            changed: ${{ needs.detect-changes.outputs.gateway }}
+          - service: frontend
+            changed: ${{ needs.detect-changes.outputs.frontend }}
+    steps:
+      - name: Authenticate to GCP
+        if: matrix.changed == 'true'
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.DEPLOYER_SA }}
       - name: Get GKE credentials
         if: matrix.changed == 'true'
         uses: google-github-actions/get-gke-credentials@v2
         with:
           cluster_name: ${{ env.CLUSTER }}
           location: ${{ env.REGION }}
-
       - name: Deploy to GKE
         if: matrix.changed == 'true'
         run: |
