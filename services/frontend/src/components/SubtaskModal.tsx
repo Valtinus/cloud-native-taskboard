@@ -10,8 +10,6 @@ import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
-import { Checkbox } from '@/components/ui/checkbox'
-import { Separator } from '@/components/ui/separator'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { cn } from '@/lib/utils'
 
@@ -41,7 +39,6 @@ export default function SubtaskModal(props: Props) {
   const [description, setDescription] = useState(subtask?.description ?? '')
   const [deadline, setDeadline]       = useState(subtask?.deadline ? subtask.deadline.slice(0, 10) : '')
   const [priority, setPriority]       = useState<Priority>(subtask?.priority ?? 'medium')
-  const [completed, setCompleted]     = useState(subtask?.completed ?? false)
   const [saving, setSaving]           = useState(false)
   const [error, setError]             = useState('')
 
@@ -51,7 +48,6 @@ export default function SubtaskModal(props: Props) {
     setDescription(subtask?.description ?? '')
     setDeadline(subtask?.deadline ? subtask.deadline.slice(0, 10) : '')
     setPriority(subtask?.priority ?? 'medium')
-    setCompleted(subtask?.completed ?? false)
     setError('')
   }, [props.open]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -61,7 +57,7 @@ export default function SubtaskModal(props: Props) {
     setError('')
     try {
       if (isEdit && subtask) {
-        const patch: Record<string, unknown> = { title: title.trim(), priority, completed }
+        const patch: Record<string, unknown> = { title: title.trim(), priority }
         if (description.trim()) patch.description = description.trim()
         else patch.clear_description = true
         if (deadline) patch.deadline = deadline + 'T00:00:00.000Z'
@@ -171,23 +167,6 @@ export default function SubtaskModal(props: Props) {
               )}
             </div>
           </div>
-
-          {/* Completed (edit only) */}
-          {isEdit && (
-            <>
-              <Separator />
-              <div className="flex items-center gap-2">
-                <Checkbox
-                  id="subtask-completed"
-                  checked={completed}
-                  onCheckedChange={v => setCompleted(!!v)}
-                />
-                <Label htmlFor="subtask-completed" className="cursor-pointer">
-                  Mark as completed
-                </Label>
-              </div>
-            </>
-          )}
 
           {error && (
             <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">

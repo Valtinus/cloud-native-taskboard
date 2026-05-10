@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
-import { Trash2, Plus, Calendar, Flag, ArrowRightLeft } from 'lucide-react'
-import type { Task, Subtask, Priority, Column } from '@/lib/types'
+import { Trash2, Plus, Calendar, Flag } from 'lucide-react'
+import type { Task, Subtask, Priority } from '@/lib/types'
 import { PRIORITY_CONFIG } from '@/lib/types'
 import * as api from '@/lib/api'
 import { fmtDate, cn } from '@/lib/utils'
@@ -23,7 +23,6 @@ interface CreateProps {
 interface EditProps {
   mode: 'edit'
   task: Task
-  columns?: Column[]        // pass board columns to enable "move to" picker
   onUpdated: (t: Task) => void
   onDeleted: (id: number) => void
 }
@@ -40,7 +39,6 @@ export default function TaskModal(props: Props) {
   const [description, setDescription] = useState(task?.description ?? '')
   const [deadline, setDeadline]       = useState(task?.deadline ? task.deadline.slice(0, 10) : '')
   const [priority, setPriority]       = useState<Priority>(task?.priority ?? 'medium')
-  const [columnId, setColumnId]       = useState<number>(task?.column_id ?? (props.mode === 'create' ? props.columnId : 0))
   const [subtasks, setSubtasks]       = useState<Subtask[]>([])
   const [saving, setSaving]           = useState(false)
   const [error, setError]             = useState('')
@@ -54,7 +52,6 @@ export default function TaskModal(props: Props) {
     setDescription(task?.description ?? '')
     setDeadline(task?.deadline ? task.deadline.slice(0, 10) : '')
     setPriority(task?.priority ?? 'medium')
-    setColumnId(task?.column_id ?? (props.mode === 'create' ? props.columnId : 0))
     setError('')
     setAddingSubtask(false)
     setEditingSubtask(null)
@@ -76,8 +73,6 @@ export default function TaskModal(props: Props) {
         else patch.clear_description = true
         if (deadline) patch.deadline = deadline + 'T00:00:00.000Z'
         else patch.clear_deadline = true
-        // include column move if changed
-        if (columnId !== task.column_id) patch.column_id = columnId
         const updated = await api.updateTask(task.id, patch)
         props.onUpdated(updated)
       } else if (!isEdit) {
@@ -109,7 +104,6 @@ export default function TaskModal(props: Props) {
 
   const pCfg      = PRIORITY_CONFIG[priority]
   const isOverdue = task?.deadline && new Date(task.deadline) < new Date()
-  const columns   = isEdit ? (props as EditProps).columns ?? [] : []
 
   return (
     <>
@@ -123,45 +117,25 @@ export default function TaskModal(props: Props) {
           </DialogHeader>
 
           <div className="space-y-4">
-            {/* Title */}
             <div className="space-y-1.5">
               <Label>Title</Label>
-              <Input
-                value={title}
-                onChange={e => setTitle(e.target.value)}
-                placeholder="Task title…"
-                autoFocus
-              />
+              <Input value={title} onChange={e => setTitle(e.target.value)} placeholder="Task title…" autoFocus />
             </div>
 
-            {/* Description */}
             <div className="space-y-1.5">
-              <Label>
-                Description{' '}
-                <span className="text-xs font-normal text-muted-foreground">(optional)</span>
-              </Label>
-              <Textarea
-                value={description}
-                onChange={e => setDescription(e.target.value)}
-                placeholder="Add a description…"
-                rows={3}
-              />
+              <Label>Description <span className="text-xs font-normal text-muted-foreground">(optional)</span></Label>
+              <Textarea value={description} onChange={e => setDescription(e.target.value)} placeholder="Add a description…" rows={3} />
             </div>
 
-            {/* Priority + Deadline */}
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
-                <Label className="flex items-center gap-1.5">
-                  <Flag className="h-3.5 w-3.5" /> Priority
-                </Label>
+                <Label className="flex items-center gap-1.5"><Flag className="h-3.5 w-3.5" /> Priority</Label>
                 <Select value={priority} onValueChange={v => setPriority(v as Priority)}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
                     {PRIORITIES.map(p => (
                       <SelectItem key={p} value={p}>
-                        <span className="flex items-center gap-1.5">
-                          {PRIORITY_CONFIG[p].emoji} {PRIORITY_CONFIG[p].label}
-                        </span>
+                        <span className="flex items-center gap-1.5">{PRIORITY_CONFIG[p].emoji} {PRIORITY_CONFIG[p].label}</span>
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -172,67 +146,29 @@ export default function TaskModal(props: Props) {
               </div>
 
               <div className="space-y-1.5">
-                <Label className="flex items-center gap-1.5">
-                  <Calendar className="h-3.5 w-3.5" /> Deadline
-                </Label>
-                <Input
-                  type="date"
-                  value={deadline}
-                  onChange={e => setDeadline(e.target.value)}
-                />
+                <Label className="flex items-center gap-1.5"><Calendar className="h-3.5 w-3.5" /> Deadline</Label>
+                <Input type="date" value={deadline} onChange={e => setDeadline(e.target.value)} />
                 {deadline && (
-                  <p className={`text-xs ${isOverdue ? 'text-destructive' : 'text-muted-foreground'}`}>
-                    {fmtDate(deadline)}
-                  </p>
+                  <p className={`text-xs ${isOverdue ? 'text-destructive' : 'text-muted-foreground'}`}>{fmtDate(deadline)}</p>
                 )}
               </div>
             </div>
 
-            {/* Move to column (edit mode, when columns are provided) */}
-            {isEdit && columns.length > 1 && (
-              <div className="space-y-1.5">
-                <Label className="flex items-center gap-1.5">
-                  <ArrowRightLeft className="h-3.5 w-3.5" /> Column
-                </Label>
-                <Select value={String(columnId)} onValueChange={v => setColumnId(Number(v))}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {columns.map(c => (
-                      <SelectItem key={c.id} value={String(c.id)}>{c.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            )}
+            {error && <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</div>}
 
-            {error && (
-              <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
-                {error}
-              </div>
-            )}
-
-            {/* Actions */}
             <div className="flex gap-2">
-              <Button
-                onClick={save}
-                disabled={saving || !title.trim()}
-                className="flex-1 bg-gradient-to-r from-indigo-500 to-violet-600 hover:from-indigo-600 hover:to-violet-700"
-              >
+              <Button onClick={save} disabled={saving || !title.trim()}
+                className="flex-1 bg-gradient-to-r from-indigo-500 to-violet-600 hover:from-indigo-600 hover:to-violet-700">
                 {saving ? 'Saving…' : isEdit ? 'Save changes' : 'Create task'}
               </Button>
               {isEdit && (
-                <Button
-                  variant="destructive"
-                  size="icon"
-                  onClick={() => { props.onDeleted(task!.id); props.onClose() }}
-                  aria-label="Delete task"
-                >
+                <Button variant="destructive" size="icon"
+                  onClick={() => { props.onDeleted(task!.id); props.onClose() }}>
                   <Trash2 className="h-4 w-4" />
                 </Button>
               )}
             </div>
 
-            {/* Subtasks — edit mode only */}
             {isEdit && (
               <>
                 <Separator />
@@ -248,60 +184,36 @@ export default function TaskModal(props: Props) {
 
                   {subtasks.length > 0 && (
                     <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
-                      <div
-                        className="h-full rounded-full bg-gradient-to-r from-indigo-500 to-violet-600 transition-all"
-                        style={{ width: `${(subtasks.filter(s => s.completed).length / subtasks.length) * 100}%` }}
-                      />
+                      <div className="h-full rounded-full bg-gradient-to-r from-indigo-500 to-violet-600 transition-all"
+                        style={{ width: `${(subtasks.filter(s => s.completed).length / subtasks.length) * 100}%` }} />
                     </div>
                   )}
 
                   {subtasks.map(st => {
                     const sCfg = PRIORITY_CONFIG[st.priority] ?? PRIORITY_CONFIG.medium
                     return (
-                      <div
-                        key={st.id}
-                        className="group flex cursor-pointer items-start gap-2 rounded-md px-2 py-1.5 hover:bg-muted/50"
-                        onClick={() => setEditingSubtask(st)}
-                      >
-                        <Checkbox
-                          checked={st.completed}
-                          onCheckedChange={() => toggleSubtask(st)}
-                          className="mt-0.5"
-                          onClick={e => e.stopPropagation()}
-                        />
+                      <div key={st.id} className="group flex cursor-pointer items-start gap-2 rounded-md px-2 py-1.5 hover:bg-muted/50"
+                        onClick={() => setEditingSubtask(st)}>
+                        <Checkbox checked={st.completed} onCheckedChange={() => toggleSubtask(st)}
+                          className="mt-0.5" onClick={e => e.stopPropagation()} />
                         <div className="flex-1 min-w-0">
-                          <p className={cn('text-sm leading-snug', st.completed && 'line-through text-muted-foreground')}>
-                            {st.title}
-                          </p>
+                          <p className={cn('text-sm leading-snug', st.completed && 'line-through text-muted-foreground')}>{st.title}</p>
                           <div className="mt-0.5 flex flex-wrap items-center gap-2">
-                            <span className={cn('inline-flex items-center gap-0.5 text-xs font-medium', sCfg.badge.split(' ').slice(0, 2).join(' '))}>
+                            <span className={cn('text-xs font-medium', sCfg.badge.split(' ').slice(0,2).join(' '))}>
                               {sCfg.emoji} {sCfg.label}
                             </span>
-                            {st.deadline && (
-                              <span className="text-xs text-muted-foreground">
-                                📅 {fmtDate(st.deadline)}
-                              </span>
-                            )}
+                            {st.deadline && <span className="text-xs text-muted-foreground">📅 {fmtDate(st.deadline)}</span>}
                           </div>
                         </div>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-6 w-6 shrink-0 opacity-0 group-hover:opacity-100"
-                          onClick={e => { e.stopPropagation(); deleteSubtask(st.id) }}
-                        >
+                        <Button variant="ghost" size="icon" className="h-6 w-6 shrink-0 opacity-0 group-hover:opacity-100"
+                          onClick={e => { e.stopPropagation(); deleteSubtask(st.id) }}>
                           <Trash2 className="h-3 w-3" />
                         </Button>
                       </div>
                     )
                   })}
 
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="w-full"
-                    onClick={() => setAddingSubtask(true)}
-                  >
+                  <Button variant="outline" size="sm" className="w-full" onClick={() => setAddingSubtask(true)}>
                     <Plus className="mr-1.5 h-4 w-4" /> New subtask
                   </Button>
                 </div>
@@ -311,29 +223,16 @@ export default function TaskModal(props: Props) {
         </DialogContent>
       </Dialog>
 
-      {/* Create subtask sub-modal */}
       {isEdit && addingSubtask && (
-        <SubtaskModal
-          mode="create"
-          parentTaskId={task!.id}
-          parentTaskTitle={task!.title}
-          open={addingSubtask}
-          onClose={() => setAddingSubtask(false)}
-          onCreated={st => setSubtasks(prev => [...prev, st])}
-        />
+        <SubtaskModal mode="create" parentTaskId={task!.id} parentTaskTitle={task!.title}
+          open={addingSubtask} onClose={() => setAddingSubtask(false)}
+          onCreated={st => setSubtasks(prev => [...prev, st])} />
       )}
-
-      {/* Edit subtask sub-modal */}
       {isEdit && editingSubtask && (
-        <SubtaskModal
-          mode="edit"
-          subtask={editingSubtask}
-          parentTaskTitle={task!.title}
-          open={!!editingSubtask}
-          onClose={() => setEditingSubtask(null)}
+        <SubtaskModal mode="edit" subtask={editingSubtask} parentTaskTitle={task!.title}
+          open={!!editingSubtask} onClose={() => setEditingSubtask(null)}
           onUpdated={st => setSubtasks(prev => prev.map(s => s.id === st.id ? st : s))}
-          onDeleted={id => setSubtasks(prev => prev.filter(s => s.id !== id))}
-        />
+          onDeleted={id => setSubtasks(prev => prev.filter(s => s.id !== id))} />
       )}
     </>
   )
