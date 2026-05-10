@@ -5,14 +5,14 @@ locals {
 }
 
 data "google_secret_manager_secret_version" "db_password" {
-  secret  = google_secret_manager_secret.db_password.secret_id
-  version = "latest"
+  secret     = google_secret_manager_secret.db_password.secret_id
+  version    = "latest"
   depends_on = [google_secret_manager_secret_version.db_password]
 }
 
 data "google_secret_manager_secret_version" "jwt_signing_key" {
-  secret  = google_secret_manager_secret.jwt_signing_key.secret_id
-  version = "latest"
+  secret     = google_secret_manager_secret.jwt_signing_key.secret_id
+  version    = "latest"
   depends_on = [google_secret_manager_secret_version.jwt_signing_key]
 }
 
@@ -48,12 +48,12 @@ resource "kubernetes_config_map" "app_config" {
     namespace = kubernetes_namespace.taskboard.metadata[0].name
   }
   data = {
-    DB_HOST            = google_sql_database_instance.main.private_ip_address
-    DB_PORT            = "5432"
-    DB_NAME            = "taskboard"
-    DB_USER            = "app"
-    USERS_SERVICE_URL  = "http://users-service.taskboard.svc.cluster.local:8080"
-    TASKS_SERVICE_URL  = "http://tasks-service.taskboard.svc.cluster.local:8080"
+    DB_HOST           = google_sql_database_instance.main.private_ip_address
+    DB_PORT           = "5432"
+    DB_NAME           = "taskboard"
+    DB_USER           = "app"
+    USERS_SERVICE_URL = "http://users-service.taskboard.svc.cluster.local:8080"
+    TASKS_SERVICE_URL = "http://tasks-service.taskboard.svc.cluster.local:8080"
   }
 }
 
@@ -75,9 +75,13 @@ resource "kubernetes_deployment" "users_service" {
         container {
           name  = "users-service"
           image = "${local.registry}/users-service:${local.bootstrap_tag}"
-          port { container_port = 8080 }
+          port {
+            container_port = 8080
+          }
           env_from {
-            config_map_ref { name = kubernetes_config_map.app_config.metadata[0].name }
+            config_map_ref {
+              name = kubernetes_config_map.app_config.metadata[0].name
+            }
           }
           env {
             name = "DB_PASSWORD"
@@ -98,12 +102,18 @@ resource "kubernetes_deployment" "users_service" {
             }
           }
           liveness_probe {
-            http_get { path = "/healthz"; port = 8080 }
+            http_get {
+              path = "/healthz"
+              port = 8080
+            }
             initial_delay_seconds = 10
             period_seconds        = 10
           }
           readiness_probe {
-            http_get { path = "/healthz"; port = 8080 }
+            http_get {
+              path = "/healthz"
+              port = 8080
+            }
             initial_delay_seconds = 5
             period_seconds        = 5
           }
@@ -131,9 +141,13 @@ resource "kubernetes_deployment" "tasks_service" {
         container {
           name  = "tasks-service"
           image = "${local.registry}/tasks-service:${local.bootstrap_tag}"
-          port { container_port = 8080 }
+          port {
+            container_port = 8080
+          }
           env_from {
-            config_map_ref { name = kubernetes_config_map.app_config.metadata[0].name }
+            config_map_ref {
+              name = kubernetes_config_map.app_config.metadata[0].name
+            }
           }
           env {
             name = "DB_PASSWORD"
@@ -145,12 +159,18 @@ resource "kubernetes_deployment" "tasks_service" {
             }
           }
           liveness_probe {
-            http_get { path = "/healthz"; port = 8080 }
+            http_get {
+              path = "/healthz"
+              port = 8080
+            }
             initial_delay_seconds = 10
             period_seconds        = 10
           }
           readiness_probe {
-            http_get { path = "/healthz"; port = 8080 }
+            http_get {
+              path = "/healthz"
+              port = 8080
+            }
             initial_delay_seconds = 5
             period_seconds        = 5
           }
@@ -178,9 +198,13 @@ resource "kubernetes_deployment" "api_gateway" {
         container {
           name  = "api-gateway"
           image = "${local.registry}/api-gateway:${local.bootstrap_tag}"
-          port { container_port = 8080 }
+          port {
+            container_port = 8080
+          }
           env_from {
-            config_map_ref { name = kubernetes_config_map.app_config.metadata[0].name }
+            config_map_ref {
+              name = kubernetes_config_map.app_config.metadata[0].name
+            }
           }
           env {
             name = "JWT_SIGNING_KEY"
@@ -192,12 +216,18 @@ resource "kubernetes_deployment" "api_gateway" {
             }
           }
           liveness_probe {
-            http_get { path = "/healthz"; port = 8080 }
+            http_get {
+              path = "/healthz"
+              port = 8080
+            }
             initial_delay_seconds = 10
             period_seconds        = 10
           }
           readiness_probe {
-            http_get { path = "/healthz"; port = 8080 }
+            http_get {
+              path = "/healthz"
+              port = 8080
+            }
             initial_delay_seconds = 5
             period_seconds        = 5
           }
@@ -225,9 +255,14 @@ resource "kubernetes_deployment" "frontend" {
         container {
           name  = "frontend"
           image = "${local.registry}/frontend:${local.bootstrap_tag}"
-          port { container_port = 80 }
+          port {
+            container_port = 80
+          }
           liveness_probe {
-            http_get { path = "/"; port = 80 }
+            http_get {
+              path = "/"
+              port = 80
+            }
             initial_delay_seconds = 10
             period_seconds        = 10
           }
@@ -244,7 +279,10 @@ resource "kubernetes_service" "users_service" {
   }
   spec {
     selector = { app = "users-service" }
-    port { port = 8080; target_port = 8080 }
+    port {
+      port        = 8080
+      target_port = 8080
+    }
     type = "ClusterIP"
   }
 }
@@ -256,7 +294,10 @@ resource "kubernetes_service" "tasks_service" {
   }
   spec {
     selector = { app = "tasks-service" }
-    port { port = 8080; target_port = 8080 }
+    port {
+      port        = 8080
+      target_port = 8080
+    }
     type = "ClusterIP"
   }
 }
@@ -268,7 +309,10 @@ resource "kubernetes_service" "api_gateway" {
   }
   spec {
     selector = { app = "api-gateway" }
-    port { port = 8080; target_port = 8080 }
+    port {
+      port        = 8080
+      target_port = 8080
+    }
     type = "ClusterIP"
   }
 }
@@ -280,7 +324,10 @@ resource "kubernetes_service" "frontend" {
   }
   spec {
     selector = { app = "frontend" }
-    port { port = 80; target_port = 80 }
+    port {
+      port        = 80
+      target_port = 80
+    }
     type = "NodePort"
   }
 }
@@ -297,7 +344,9 @@ resource "kubernetes_ingress_v1" "frontend" {
     default_backend {
       service {
         name = kubernetes_service.frontend.metadata[0].name
-        port { number = 80 }
+        port {
+          number = 80
+        }
       }
     }
   }
