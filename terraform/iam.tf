@@ -44,3 +44,9 @@ resource "google_service_account_iam_member" "github_wif_binding" {
   role               = "roles/iam.workloadIdentityUser"
   member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/${var.github_repo}"
 }
+
+resource "google_storage_bucket_iam_member" "deployer_state_bucket" {
+  bucket = var.state_bucket
+  role   = "roles/storage.objectAdmin"
+  member = "serviceAccount:${google_service_account.github_deployer.email}"
+}
