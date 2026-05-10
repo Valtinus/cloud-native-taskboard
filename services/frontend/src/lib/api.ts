@@ -81,7 +81,13 @@ export const deleteTask = (id: number) => request(`/tasks/${id}`, { method: 'DEL
 // Subtasks
 export const listSubtasks = (taskId: number) => json<Subtask[]>(`/tasks/${taskId}/subtasks`)
 
-export const createSubtask = (taskId: number, data: { title: string; description?: string; deadline?: string }) =>
+export const createSubtask = (taskId: number, data: {
+  title: string
+  description?: string
+  deadline?: string
+  priority?: Priority
+  assigned_user_id?: number
+}) =>
   json<Subtask>(`/tasks/${taskId}/subtasks`, { method: 'POST', body: JSON.stringify(data) })
 
 export const updateSubtask = (id: number, patch: object) =>

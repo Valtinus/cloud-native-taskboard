@@ -1,13 +1,19 @@
 import { useEffect, useState } from 'react'
-import { Trash2, CornerDownRight } from 'lucide-react'
-import type { Subtask } from '@/lib/types'
+import { Trash2, Calendar, Flag, CornerDownRight } from 'lucide-react'
+import type { Subtask, Priority } from '@/lib/types'
+import { PRIORITY_CONFIG } from '@/lib/types'
 import * as api from '@/lib/api'
+import { fmtDate } from '@/lib/utils'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Label } from '@/components/ui/label'
+import { Badge } from '@/components/ui/badge'
 import { Checkbox } from '@/components/ui/checkbox'
+import { Separator } from '@/components/ui/separator'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { cn } from '@/lib/utils'
 
 interface CreateProps {
   mode: 'create'
@@ -25,22 +31,26 @@ interface EditProps {
 
 type Props = (CreateProps | EditProps) & { open: boolean; onClose: () => void }
 
+const PRIORITIES: Priority[] = ['low', 'medium', 'high']
+
 export default function SubtaskModal(props: Props) {
-  const isEdit = props.mode === 'edit'
+  const isEdit  = props.mode === 'edit'
   const subtask = isEdit ? props.subtask : null
 
-  const [title, setTitle] = useState(subtask?.title ?? '')
+  const [title, setTitle]             = useState(subtask?.title ?? '')
   const [description, setDescription] = useState(subtask?.description ?? '')
-  const [deadline, setDeadline] = useState(subtask?.deadline ? subtask.deadline.slice(0, 10) : '')
-  const [completed, setCompleted] = useState(subtask?.completed ?? false)
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState('')
+  const [deadline, setDeadline]       = useState(subtask?.deadline ? subtask.deadline.slice(0, 10) : '')
+  const [priority, setPriority]       = useState<Priority>(subtask?.priority ?? 'medium')
+  const [completed, setCompleted]     = useState(subtask?.completed ?? false)
+  const [saving, setSaving]           = useState(false)
+  const [error, setError]             = useState('')
 
   useEffect(() => {
     if (!props.open) return
     setTitle(subtask?.title ?? '')
     setDescription(subtask?.description ?? '')
     setDeadline(subtask?.deadline ? subtask.deadline.slice(0, 10) : '')
+    setPriority(subtask?.priority ?? 'medium')
     setCompleted(subtask?.completed ?? false)
     setError('')
   }, [props.open]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -51,7 +61,7 @@ export default function SubtaskModal(props: Props) {
     setError('')
     try {
       if (isEdit && subtask) {
-        const patch: Record<string, unknown> = { title: title.trim(), completed }
+        const patch: Record<string, unknown> = { title: title.trim(), priority, completed }
         if (description.trim()) patch.description = description.trim()
         else patch.clear_description = true
         if (deadline) patch.deadline = deadline + 'T00:00:00.000Z'
@@ -62,6 +72,7 @@ export default function SubtaskModal(props: Props) {
       } else if (!isEdit) {
         const created = await api.createSubtask(props.parentTaskId, {
           title: title.trim(),
+          priority,
           ...(description.trim() ? { description: description.trim() } : {}),
           ...(deadline ? { deadline: deadline + 'T00:00:00.000Z' } : {}),
         })
@@ -75,20 +86,26 @@ export default function SubtaskModal(props: Props) {
     }
   }
 
+  const pCfg      = PRIORITY_CONFIG[priority]
+  const isOverdue = subtask?.deadline && new Date(subtask.deadline) < new Date()
+
   return (
     <Dialog open={props.open} onOpenChange={v => !v && props.onClose()}>
-      <DialogContent className="max-w-md">
+      <DialogContent className="max-w-lg max-h-[92vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex flex-wrap items-center gap-1.5">
-            <CornerDownRight className="h-4 w-4 shrink-0 text-muted-foreground" />
-            <span>{isEdit ? 'Edit subtask' : 'New subtask'}</span>
-            <span className="text-sm font-normal text-muted-foreground truncate">
-              — {props.parentTaskTitle}
-            </span>
+            {isEdit ? 'Edit subtask' : 'New subtask'}
+            {isOverdue && <Badge variant="destructive" className="text-xs">Overdue</Badge>}
           </DialogTitle>
+          {/* Parent task indicator */}
+          <div className="flex items-center gap-1 pt-0.5 text-sm text-muted-foreground">
+            <CornerDownRight className="h-3.5 w-3.5 shrink-0" />
+            <span className="truncate">{props.parentTaskTitle}</span>
+          </div>
         </DialogHeader>
 
         <div className="space-y-4">
+          {/* Title */}
           <div className="space-y-1.5">
             <Label>Title</Label>
             <Input
@@ -99,6 +116,7 @@ export default function SubtaskModal(props: Props) {
             />
           </div>
 
+          {/* Description */}
           <div className="space-y-1.5">
             <Label>
               Description{' '}
@@ -108,33 +126,67 @@ export default function SubtaskModal(props: Props) {
               value={description}
               onChange={e => setDescription(e.target.value)}
               placeholder="Add a description…"
-              rows={2}
+              rows={3}
             />
           </div>
 
-          <div className="space-y-1.5">
-            <Label>
-              Deadline{' '}
-              <span className="text-xs font-normal text-muted-foreground">(optional)</span>
-            </Label>
-            <Input
-              type="date"
-              value={deadline}
-              onChange={e => setDeadline(e.target.value)}
-            />
-          </div>
-
-          {isEdit && (
-            <div className="flex items-center gap-2">
-              <Checkbox
-                id="subtask-completed"
-                checked={completed}
-                onCheckedChange={v => setCompleted(!!v)}
-              />
-              <Label htmlFor="subtask-completed" className="cursor-pointer">
-                Mark as completed
+          {/* Priority + Deadline */}
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label className="flex items-center gap-1.5">
+                <Flag className="h-3.5 w-3.5" /> Priority
               </Label>
+              <Select value={priority} onValueChange={v => setPriority(v as Priority)}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {PRIORITIES.map(p => (
+                    <SelectItem key={p} value={p}>
+                      <span className="flex items-center gap-1.5">
+                        {PRIORITY_CONFIG[p].emoji} {PRIORITY_CONFIG[p].label}
+                      </span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <div className={cn('inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold', pCfg.badge)}>
+                {pCfg.emoji} {pCfg.label}
+              </div>
             </div>
+
+            <div className="space-y-1.5">
+              <Label className="flex items-center gap-1.5">
+                <Calendar className="h-3.5 w-3.5" /> Deadline
+              </Label>
+              <Input
+                type="date"
+                value={deadline}
+                onChange={e => setDeadline(e.target.value)}
+              />
+              {deadline && (
+                <p className={`text-xs ${isOverdue ? 'text-destructive' : 'text-muted-foreground'}`}>
+                  {fmtDate(deadline)}
+                </p>
+              )}
+            </div>
+          </div>
+
+          {/* Completed (edit only) */}
+          {isEdit && (
+            <>
+              <Separator />
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="subtask-completed"
+                  checked={completed}
+                  onCheckedChange={v => setCompleted(!!v)}
+                />
+                <Label htmlFor="subtask-completed" className="cursor-pointer">
+                  Mark as completed
+                </Label>
+              </div>
+            </>
           )}
 
           {error && (
@@ -143,6 +195,7 @@ export default function SubtaskModal(props: Props) {
             </div>
           )}
 
+          {/* Actions */}
           <div className="flex gap-2">
             <Button
               onClick={save}

@@ -17,13 +17,8 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from '@/compon
 
 // ── types ─────────────────────────────────────────────────────────────────────
 
-interface TaskWithSubtasks extends Task {
-  subtasks: Subtask[]
-}
-
-interface ColumnWithTasks extends Column {
-  tasks: TaskWithSubtasks[]
-}
+interface TaskWithSubtasks extends Task { subtasks: Subtask[] }
+interface ColumnWithTasks extends Column { tasks: TaskWithSubtasks[] }
 
 type ModalState =
   | { kind: 'none' }
@@ -33,19 +28,83 @@ type ModalState =
 
 // ── deadline coloring ─────────────────────────────────────────────────────────
 
-interface DeadlineStyle { cardBorder: string; badgeBg: string; text: string; label: string }
+interface DL { cardBorder: string; badgeBg: string; label: string }
 
-function deadlineStyle(deadline: string | null): DeadlineStyle | null {
+function deadlineStyle(deadline: string | null): DL | null {
   if (!deadline) return null
   const days = (new Date(deadline.length === 10 ? deadline + 'T12:00:00Z' : deadline).getTime() - Date.now()) / 86_400_000
-  if (days < 0)   return { cardBorder: 'border-red-400 dark:border-red-600 bg-red-50/60 dark:bg-red-950/20',   badgeBg: 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300',          text: 'text-red-600 dark:text-red-400',     label: 'Overdue' }
-  if (days <= 7)  return { cardBorder: 'border-red-300 dark:border-red-600/70',                                  badgeBg: 'bg-red-50 text-red-600 dark:bg-red-900/20 dark:text-red-400',            text: 'text-red-500 dark:text-red-400',     label: '≤ 1 week' }
-  if (days <= 30) return { cardBorder: 'border-orange-300 dark:border-orange-600/70',                            badgeBg: 'bg-orange-50 text-orange-600 dark:bg-orange-900/20 dark:text-orange-400', text: 'text-orange-500 dark:text-orange-400', label: '≤ 1 month' }
-  if (days <= 90) return { cardBorder: 'border-blue-300 dark:border-blue-600/70',                                badgeBg: 'bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400',         text: 'text-blue-500 dark:text-blue-400',    label: '≤ 3 months' }
-  return            { cardBorder: 'border-green-300 dark:border-green-600/70',                                   badgeBg: 'bg-green-50 text-green-600 dark:bg-green-900/20 dark:text-green-400',    text: 'text-green-500 dark:text-green-400',  label: '' }
+  if (days < 0)   return { cardBorder: 'border-red-400 dark:border-red-600 bg-red-50/60 dark:bg-red-950/20',   badgeBg: 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300',          label: 'Overdue' }
+  if (days <= 7)  return { cardBorder: 'border-red-300 dark:border-red-600/70',                                  badgeBg: 'bg-red-50 text-red-600 dark:bg-red-900/20 dark:text-red-400',            label: '≤ 1 week' }
+  if (days <= 30) return { cardBorder: 'border-orange-300 dark:border-orange-600/70',                            badgeBg: 'bg-orange-50 text-orange-600 dark:bg-orange-900/20 dark:text-orange-400', label: '≤ 1 month' }
+  if (days <= 90) return { cardBorder: 'border-blue-300 dark:border-blue-600/70',                                badgeBg: 'bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400',         label: '≤ 3 months' }
+  return            { cardBorder: 'border-green-300 dark:border-green-600/70',                                   badgeBg: 'bg-green-50 text-green-600 dark:bg-green-900/20 dark:text-green-400',    label: '' }
 }
 
-// ── component ─────────────────────────────────────────────────────────────────
+// ── shared task card renderer ─────────────────────────────────────────────────
+
+interface TaskCardProps {
+  title: string
+  description: string | null
+  priority: Task['priority']
+  deadline: string | null
+  subtaskSummary?: string    // e.g. "1/3 subtasks"
+  parentLabel?: string       // shown above title if this is a subtask
+  completed?: boolean        // subtask-only
+  onClick: () => void
+}
+
+function TaskCard({ title, description, priority, deadline, subtaskSummary, parentLabel, completed, onClick }: TaskCardProps) {
+  const dl   = deadlineStyle(deadline)
+  const pCfg = PRIORITY_CONFIG[priority] ?? PRIORITY_CONFIG.medium
+  return (
+    <button
+      className={cn(
+        'w-full rounded-lg border bg-background/90 p-3 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-ring',
+        dl ? dl.cardBorder : ''
+      )}
+      onClick={onClick}
+    >
+      {/* Parent label (subtasks only) */}
+      {parentLabel && (
+        <div className="mb-1 flex items-center gap-1 text-xs text-muted-foreground">
+          <CornerDownRight className="h-3 w-3 shrink-0" />
+          <span className="truncate">{parentLabel}</span>
+        </div>
+      )}
+
+      {/* Title */}
+      <p className={cn('text-sm font-semibold leading-snug', completed && 'line-through text-muted-foreground')}>
+        {title}
+      </p>
+
+      {/* Description */}
+      {description && (
+        <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{description}</p>
+      )}
+
+      {/* Priority */}
+      <div className={cn('mt-2 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold', pCfg.badge)}>
+        {pCfg.emoji} {pCfg.label}
+      </div>
+
+      {/* Deadline */}
+      {deadline && dl && (
+        <div className={cn('mt-1.5 flex w-fit items-center gap-1 rounded-md px-1.5 py-0.5 text-xs font-medium', dl.badgeBg)}>
+          <Calendar className="h-3 w-3" />
+          {fmtDate(deadline)}
+          {dl.label && <span className="opacity-75">· {dl.label}</span>}
+        </div>
+      )}
+
+      {/* Subtask summary */}
+      {subtaskSummary && (
+        <div className="mt-1.5 text-xs text-muted-foreground">{subtaskSummary}</div>
+      )}
+    </button>
+  )
+}
+
+// ── main component ────────────────────────────────────────────────────────────
 
 export default function BoardDetailPage() {
   const { id } = useParams<{ id: string }>()
@@ -115,12 +174,11 @@ export default function BoardDetailPage() {
     const idx = columns.findIndex(c => c.id === colId)
     const newPos = idx + direction
     if (newPos < 0 || newPos >= columns.length) return
-    setApiError('')
     try {
       await api.updateColumn(colId, { position: newPos })
       const cols = await api.listColumns(boardId)
       setColumns(prev => cols.map(c => ({ ...c, tasks: prev.find(p => p.id === c.id)?.tasks ?? [] })))
-    } catch (e: unknown) { setApiError(e instanceof Error ? e.message : 'Failed to reorder') }
+    } catch { setApiError('Failed to reorder') }
   }
 
   async function setColumnColor(colId: number, color: string | null) {
@@ -139,10 +197,24 @@ export default function BoardDetailPage() {
   }
 
   function handleTaskUpdated(updated: Task) {
-    setColumns(prev => prev.map(c => ({
-      ...c,
-      tasks: c.tasks.map(t => t.id === updated.id ? { ...updated, subtasks: t.subtasks } : t),
-    })))
+    setColumns(prev => prev.map(c => {
+      const had = c.tasks.some(t => t.id === updated.id)
+      const willHave = c.id === updated.column_id
+
+      if (had && !willHave) {
+        // task moved away from this column
+        return { ...c, tasks: c.tasks.filter(t => t.id !== updated.id) }
+      }
+      if (!had && willHave) {
+        // task moved into this column
+        return { ...c, tasks: [...c.tasks, { ...updated, subtasks: [] }] }
+      }
+      if (had && willHave) {
+        // task updated within same column
+        return { ...c, tasks: c.tasks.map(t => t.id === updated.id ? { ...updated, subtasks: t.subtasks } : t) }
+      }
+      return c
+    }))
     if (modal.kind === 'edit') setModal({ kind: 'edit', task: updated })
   }
 
@@ -188,6 +260,10 @@ export default function BoardDetailPage() {
     })))
     setModal({ kind: 'none' })
   }
+
+  // ── flat column list (for column picker in TaskModal) ─────────────────────────
+
+  const columnList: Column[] = columns.map(({ tasks: _t, ...c }) => c)
 
   // ── render ────────────────────────────────────────────────────────────────────
 
@@ -258,87 +334,33 @@ export default function BoardDetailPage() {
 
               {/* Tasks + subtasks */}
               <div className="flex flex-1 flex-col gap-2 overflow-y-auto p-2">
-                {col.tasks.map(task => {
-                  const taskDl = deadlineStyle(task.deadline)
-                  const pCfg   = PRIORITY_CONFIG[task.priority] ?? PRIORITY_CONFIG.medium
-                  return (
-                    <div key={task.id} className="flex flex-col gap-1.5">
-                      {/* ── Task card ── */}
-                      <button
-                        className={cn(
-                          'w-full rounded-lg border bg-background/90 p-3 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-ring',
-                          taskDl ? taskDl.cardBorder : ''
-                        )}
-                        onClick={() => setModal({ kind: 'edit', task })}
-                      >
-                        <p className="text-sm font-semibold leading-snug">{task.title}</p>
-                        {task.description && (
-                          <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{task.description}</p>
-                        )}
-                        <div className={cn('mt-2 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold', pCfg.badge)}>
-                          {pCfg.emoji} {pCfg.label}
-                        </div>
-                        {task.deadline && taskDl && (
-                          <div className={cn('mt-1.5 flex w-fit items-center gap-1 rounded-md px-1.5 py-0.5 text-xs font-medium', taskDl.badgeBg)}>
-                            <Calendar className="h-3 w-3" />
-                            {fmtDate(task.deadline)}
-                            {taskDl.label && <span className="opacity-75">· {taskDl.label}</span>}
-                          </div>
-                        )}
-                        {task.subtasks.length > 0 && (
-                          <div className="mt-1.5 flex items-center gap-1 text-xs text-muted-foreground">
-                            <CornerDownRight className="h-3 w-3" />
-                            {task.subtasks.filter(s => s.completed).length}/{task.subtasks.length} subtasks
-                          </div>
-                        )}
-                      </button>
-
-                      {/* ── Subtask cards ── */}
-                      {task.subtasks.map(st => {
-                        const stDl = deadlineStyle(st.deadline)
-                        return (
-                          <button
-                            key={st.id}
-                            className={cn(
-                              'ml-4 w-[calc(100%-1rem)] rounded-lg border bg-background/80 p-2.5 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-ring',
-                              stDl ? stDl.cardBorder : ''
-                            )}
-                            onClick={() => setModal({ kind: 'subtask-edit', subtask: st, parentTask: task })}
-                          >
-                            {/* Parent task indicator */}
-                            <div className="mb-1 flex items-center gap-1 text-xs text-muted-foreground">
-                              <CornerDownRight className="h-3 w-3 shrink-0" />
-                              <span className="truncate">{task.title}</span>
-                            </div>
-
-                            {/* Subtask title */}
-                            <p className={cn('text-sm font-medium leading-snug', st.completed && 'line-through text-muted-foreground')}>
-                              {st.title}
-                            </p>
-
-                            {st.description && (
-                              <p className="mt-1 line-clamp-1 text-xs text-muted-foreground">{st.description}</p>
-                            )}
-
-                            {/* Status + deadline */}
-                            <div className="mt-1.5 flex items-center gap-2">
-                              <span className={cn('text-xs font-medium', st.completed ? 'text-emerald-600 dark:text-emerald-400' : 'text-muted-foreground')}>
-                                {st.completed ? '✓ Done' : '○ Open'}
-                              </span>
-                              {st.deadline && stDl && (
-                                <div className={cn('flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs font-medium', stDl.badgeBg)}>
-                                  <Calendar className="h-3 w-3" />
-                                  {fmtDate(st.deadline)}
-                                  {stDl.label && <span className="opacity-75">· {stDl.label}</span>}
-                                </div>
-                              )}
-                            </div>
-                          </button>
-                        )
-                      })}
-                    </div>
-                  )
-                })}
+                {col.tasks.map(task => (
+                  <div key={task.id} className="flex flex-col gap-1.5">
+                    <TaskCard
+                      title={task.title}
+                      description={task.description}
+                      priority={task.priority}
+                      deadline={task.deadline}
+                      subtaskSummary={task.subtasks.length > 0
+                        ? `↳ ${task.subtasks.filter(s => s.completed).length}/${task.subtasks.length} subtasks`
+                        : undefined}
+                      onClick={() => setModal({ kind: 'edit', task })}
+                    />
+                    {task.subtasks.map(st => (
+                      <div key={st.id} className="ml-4">
+                        <TaskCard
+                          title={st.title}
+                          description={st.description}
+                          priority={st.priority}
+                          deadline={st.deadline}
+                          parentLabel={task.title}
+                          completed={st.completed}
+                          onClick={() => setModal({ kind: 'subtask-edit', subtask: st, parentTask: task })}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                ))}
               </div>
 
               <div className="p-2 pt-0">
@@ -360,15 +382,18 @@ export default function BoardDetailPage() {
 
       {/* Task modals */}
       {modal.kind === 'create' && (
-        <TaskModal mode="create" columnId={modal.columnId} open onClose={() => setModal({ kind: 'none' })}
+        <TaskModal mode="create" columnId={modal.columnId} open
+          onClose={() => setModal({ kind: 'none' })}
           onCreated={t => { handleTaskCreated(t); setModal({ kind: 'none' }) }} />
       )}
       {modal.kind === 'edit' && (
-        <TaskModal mode="edit" task={modal.task} open onClose={closeTaskModal}
-          onUpdated={handleTaskUpdated} onDeleted={handleTaskDeleted} />
+        <TaskModal mode="edit" task={modal.task} columns={columnList} open
+          onClose={closeTaskModal}
+          onUpdated={handleTaskUpdated}
+          onDeleted={handleTaskDeleted} />
       )}
 
-      {/* Subtask edit modal (opened from board card) */}
+      {/* Subtask edit modal */}
       {modal.kind === 'subtask-edit' && (
         <SubtaskModal
           mode="edit"

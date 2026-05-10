@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
-import { Trash2, Plus, Calendar, Flag } from 'lucide-react'
-import type { Task, Subtask, Priority } from '@/lib/types'
+import { Trash2, Plus, Calendar, Flag, ArrowRightLeft } from 'lucide-react'
+import type { Task, Subtask, Priority, Column } from '@/lib/types'
 import { PRIORITY_CONFIG } from '@/lib/types'
 import * as api from '@/lib/api'
-import { fmtDate } from '@/lib/utils'
+import { fmtDate, cn } from '@/lib/utils'
 import SubtaskModal from '@/components/SubtaskModal'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
@@ -14,7 +14,6 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { cn } from '@/lib/utils'
 
 interface CreateProps {
   mode: 'create'
@@ -24,6 +23,7 @@ interface CreateProps {
 interface EditProps {
   mode: 'edit'
   task: Task
+  columns?: Column[]        // pass board columns to enable "move to" picker
   onUpdated: (t: Task) => void
   onDeleted: (id: number) => void
 }
@@ -40,13 +40,13 @@ export default function TaskModal(props: Props) {
   const [description, setDescription] = useState(task?.description ?? '')
   const [deadline, setDeadline]       = useState(task?.deadline ? task.deadline.slice(0, 10) : '')
   const [priority, setPriority]       = useState<Priority>(task?.priority ?? 'medium')
+  const [columnId, setColumnId]       = useState<number>(task?.column_id ?? (props.mode === 'create' ? props.columnId : 0))
   const [subtasks, setSubtasks]       = useState<Subtask[]>([])
   const [saving, setSaving]           = useState(false)
   const [error, setError]             = useState('')
 
-  // Subtask sub-modal state
-  const [addingSubtask, setAddingSubtask]       = useState(false)
-  const [editingSubtask, setEditingSubtask]     = useState<Subtask | null>(null)
+  const [addingSubtask, setAddingSubtask]   = useState(false)
+  const [editingSubtask, setEditingSubtask] = useState<Subtask | null>(null)
 
   useEffect(() => {
     if (!props.open) return
@@ -54,6 +54,7 @@ export default function TaskModal(props: Props) {
     setDescription(task?.description ?? '')
     setDeadline(task?.deadline ? task.deadline.slice(0, 10) : '')
     setPriority(task?.priority ?? 'medium')
+    setColumnId(task?.column_id ?? (props.mode === 'create' ? props.columnId : 0))
     setError('')
     setAddingSubtask(false)
     setEditingSubtask(null)
@@ -75,6 +76,8 @@ export default function TaskModal(props: Props) {
         else patch.clear_description = true
         if (deadline) patch.deadline = deadline + 'T00:00:00.000Z'
         else patch.clear_deadline = true
+        // include column move if changed
+        if (columnId !== task.column_id) patch.column_id = columnId
         const updated = await api.updateTask(task.id, patch)
         props.onUpdated(updated)
       } else if (!isEdit) {
@@ -104,8 +107,9 @@ export default function TaskModal(props: Props) {
     setSubtasks(prev => prev.filter(s => s.id !== id))
   }
 
-  const pCfg    = PRIORITY_CONFIG[priority]
+  const pCfg      = PRIORITY_CONFIG[priority]
   const isOverdue = task?.deadline && new Date(task.deadline) < new Date()
+  const columns   = isEdit ? (props as EditProps).columns ?? [] : []
 
   return (
     <>
@@ -151,9 +155,7 @@ export default function TaskModal(props: Props) {
                   <Flag className="h-3.5 w-3.5" /> Priority
                 </Label>
                 <Select value={priority} onValueChange={v => setPriority(v as Priority)}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
                     {PRIORITIES.map(p => (
                       <SelectItem key={p} value={p}>
@@ -178,8 +180,30 @@ export default function TaskModal(props: Props) {
                   value={deadline}
                   onChange={e => setDeadline(e.target.value)}
                 />
+                {deadline && (
+                  <p className={`text-xs ${isOverdue ? 'text-destructive' : 'text-muted-foreground'}`}>
+                    {fmtDate(deadline)}
+                  </p>
+                )}
               </div>
             </div>
+
+            {/* Move to column (edit mode, when columns are provided) */}
+            {isEdit && columns.length > 1 && (
+              <div className="space-y-1.5">
+                <Label className="flex items-center gap-1.5">
+                  <ArrowRightLeft className="h-3.5 w-3.5" /> Column
+                </Label>
+                <Select value={String(columnId)} onValueChange={v => setColumnId(Number(v))}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {columns.map(c => (
+                      <SelectItem key={c.id} value={String(c.id)}>{c.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
 
             {error && (
               <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
@@ -231,39 +255,46 @@ export default function TaskModal(props: Props) {
                     </div>
                   )}
 
-                  {subtasks.map(st => (
-                    <div
-                      key={st.id}
-                      className="group flex cursor-pointer items-start gap-2 rounded-md px-2 py-1.5 hover:bg-muted/50"
-                      onClick={() => setEditingSubtask(st)}
-                    >
-                      <Checkbox
-                        checked={st.completed}
-                        onCheckedChange={() => toggleSubtask(st)}
-                        className="mt-0.5"
-                        onClick={e => e.stopPropagation()}
-                      />
-                      <div className="flex-1 min-w-0">
-                        <p className={cn('text-sm leading-snug', st.completed && 'line-through text-muted-foreground')}>
-                          {st.title}
-                        </p>
-                        {st.deadline && (
-                          <p className="mt-0.5 text-xs text-muted-foreground">
-                            📅 {fmtDate(st.deadline)}
-                          </p>
-                        )}
-                      </div>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-6 w-6 shrink-0 opacity-0 group-hover:opacity-100"
-                        onClick={e => { e.stopPropagation(); deleteSubtask(st.id) }}
-                        aria-label="Delete subtask"
+                  {subtasks.map(st => {
+                    const sCfg = PRIORITY_CONFIG[st.priority] ?? PRIORITY_CONFIG.medium
+                    return (
+                      <div
+                        key={st.id}
+                        className="group flex cursor-pointer items-start gap-2 rounded-md px-2 py-1.5 hover:bg-muted/50"
+                        onClick={() => setEditingSubtask(st)}
                       >
-                        <Trash2 className="h-3 w-3" />
-                      </Button>
-                    </div>
-                  ))}
+                        <Checkbox
+                          checked={st.completed}
+                          onCheckedChange={() => toggleSubtask(st)}
+                          className="mt-0.5"
+                          onClick={e => e.stopPropagation()}
+                        />
+                        <div className="flex-1 min-w-0">
+                          <p className={cn('text-sm leading-snug', st.completed && 'line-through text-muted-foreground')}>
+                            {st.title}
+                          </p>
+                          <div className="mt-0.5 flex flex-wrap items-center gap-2">
+                            <span className={cn('inline-flex items-center gap-0.5 text-xs font-medium', sCfg.badge.split(' ').slice(0, 2).join(' '))}>
+                              {sCfg.emoji} {sCfg.label}
+                            </span>
+                            {st.deadline && (
+                              <span className="text-xs text-muted-foreground">
+                                📅 {fmtDate(st.deadline)}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-6 w-6 shrink-0 opacity-0 group-hover:opacity-100"
+                          onClick={e => { e.stopPropagation(); deleteSubtask(st.id) }}
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </Button>
+                      </div>
+                    )
+                  })}
 
                   <Button
                     variant="outline"

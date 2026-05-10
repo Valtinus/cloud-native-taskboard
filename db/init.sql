@@ -45,6 +45,7 @@ CREATE TABLE IF NOT EXISTS subtasks (
   description      TEXT,
   assigned_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
   deadline         TIMESTAMP,
+  priority         VARCHAR(10) NOT NULL DEFAULT 'medium',
   completed        BOOLEAN NOT NULL DEFAULT FALSE,
   position         INTEGER NOT NULL,
   created_at       TIMESTAMP DEFAULT NOW()

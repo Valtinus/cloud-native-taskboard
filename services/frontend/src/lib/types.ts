@@ -42,6 +42,7 @@ export interface Subtask {
   description: string | null
   assigned_user_id: number | null
   deadline: string | null
+  priority: Priority
   completed: boolean
   position: number
   created_at: string

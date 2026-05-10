@@ -17,17 +17,18 @@ type Subtask struct {
 	Description    *string    `json:"description"`
 	AssignedUserID *int       `json:"assigned_user_id"`
 	Deadline       *time.Time `json:"deadline"`
+	Priority       string     `json:"priority"`
 	Completed      bool       `json:"completed"`
 	Position       int        `json:"position"`
 	CreatedAt      time.Time  `json:"created_at"`
 }
 
 const subtaskCols = `id, parent_task_id, title, description, assigned_user_id,
-	deadline, completed, position, created_at`
+	deadline, priority, completed, position, created_at`
 
 func scanSubtask(row interface{ Scan(...any) error }, st *Subtask) error {
 	return row.Scan(&st.ID, &st.ParentTaskID, &st.Title, &st.Description,
-		&st.AssignedUserID, &st.Deadline, &st.Completed, &st.Position, &st.CreatedAt)
+		&st.AssignedUserID, &st.Deadline, &st.Priority, &st.Completed, &st.Position, &st.CreatedAt)
 }
 
 func (s *Server) listSubtasks(w http.ResponseWriter, r *http.Request) {
@@ -86,9 +87,17 @@ func (s *Server) createSubtask(w http.ResponseWriter, r *http.Request) {
 		Description    *string    `json:"description"`
 		AssignedUserID *int       `json:"assigned_user_id"`
 		Deadline       *time.Time `json:"deadline"`
+		Priority       string     `json:"priority"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Title == "" {
 		writeError(w, http.StatusBadRequest, "title required")
+		return
+	}
+	if req.Priority == "" {
+		req.Priority = "medium"
+	}
+	if !validPriorities[req.Priority] {
+		writeError(w, http.StatusBadRequest, "priority must be low, medium, or high")
 		return
 	}
 	if req.AssignedUserID != nil && !s.validateAssignee(r.Context(), *req.AssignedUserID) {
@@ -104,10 +113,10 @@ func (s *Server) createSubtask(w http.ResponseWriter, r *http.Request) {
 
 	var st Subtask
 	err = scanSubtask(s.DB.QueryRow(r.Context(),
-		`INSERT INTO subtasks (parent_task_id, title, description, assigned_user_id, deadline, position)
-		 VALUES ($1, $2, $3, $4, $5, $6)
+		`INSERT INTO subtasks (parent_task_id, title, description, assigned_user_id, deadline, priority, position)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7)
 		 RETURNING `+subtaskCols,
-		taskID, req.Title, req.Description, req.AssignedUserID, req.Deadline, pos,
+		taskID, req.Title, req.Description, req.AssignedUserID, req.Deadline, req.Priority, pos,
 	), &st)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -164,11 +173,16 @@ func (s *Server) updateSubtask(w http.ResponseWriter, r *http.Request) {
 		ClearAssignee  bool       `json:"clear_assignee"`
 		Deadline       *time.Time `json:"deadline"`
 		ClearDeadline  bool       `json:"clear_deadline"`
+		Priority       *string    `json:"priority"`
 		Completed      *bool      `json:"completed"`
 		Position       *int       `json:"position"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if req.Priority != nil && !validPriorities[*req.Priority] {
+		writeError(w, http.StatusBadRequest, "priority must be low, medium, or high")
 		return
 	}
 	if req.AssignedUserID != nil && !s.validateAssignee(r.Context(), *req.AssignedUserID) {
@@ -194,6 +208,9 @@ func (s *Server) updateSubtask(w http.ResponseWriter, r *http.Request) {
 		s.DB.Exec(ctx, `UPDATE subtasks SET deadline = NULL WHERE id = $1`, id)
 	} else if req.Deadline != nil {
 		s.DB.Exec(ctx, `UPDATE subtasks SET deadline = $1 WHERE id = $2`, *req.Deadline, id)
+	}
+	if req.Priority != nil {
+		s.DB.Exec(ctx, `UPDATE subtasks SET priority = $1 WHERE id = $2`, *req.Priority, id)
 	}
 	if req.Completed != nil {
 		s.DB.Exec(ctx, `UPDATE subtasks SET completed = $1 WHERE id = $2`, *req.Completed, id)

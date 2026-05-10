@@ -54,6 +54,7 @@ CREATE TABLE IF NOT EXISTS subtasks (
   description      TEXT,
   assigned_user_id INTEGER,
   deadline         TIMESTAMP,
+  priority         VARCHAR(10) NOT NULL DEFAULT 'medium',
   completed        BOOLEAN NOT NULL DEFAULT FALSE,
   position         INTEGER NOT NULL,
   created_at       TIMESTAMP DEFAULT NOW()
@@ -66,8 +67,9 @@ CREATE INDEX IF NOT EXISTS idx_subtasks_parent   ON subtasks(parent_task_id);
 CREATE INDEX IF NOT EXISTS idx_subtasks_assignee ON subtasks(assigned_user_id);
 
 -- Idempotent upgrades for existing databases
-ALTER TABLE board_columns ADD COLUMN IF NOT EXISTS color VARCHAR(20);
+ALTER TABLE board_columns ADD COLUMN IF NOT EXISTS color    VARCHAR(20);
 ALTER TABLE tasks         ADD COLUMN IF NOT EXISTS priority VARCHAR(10) NOT NULL DEFAULT 'medium';
+ALTER TABLE subtasks      ADD COLUMN IF NOT EXISTS priority VARCHAR(10) NOT NULL DEFAULT 'medium';
 `
 
 func (s *Server) Migrate(ctx context.Context) error {
