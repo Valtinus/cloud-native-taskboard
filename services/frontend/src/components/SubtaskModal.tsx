@@ -1,0 +1,169 @@
+import { useEffect, useState } from 'react'
+import { Trash2, CornerDownRight } from 'lucide-react'
+import type { Subtask } from '@/lib/types'
+import * as api from '@/lib/api'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
+import { Label } from '@/components/ui/label'
+import { Checkbox } from '@/components/ui/checkbox'
+
+interface CreateProps {
+  mode: 'create'
+  parentTaskId: number
+  parentTaskTitle: string
+  onCreated: (st: Subtask) => void
+}
+interface EditProps {
+  mode: 'edit'
+  subtask: Subtask
+  parentTaskTitle: string
+  onUpdated: (st: Subtask) => void
+  onDeleted: (id: number) => void
+}
+
+type Props = (CreateProps | EditProps) & { open: boolean; onClose: () => void }
+
+export default function SubtaskModal(props: Props) {
+  const isEdit = props.mode === 'edit'
+  const subtask = isEdit ? props.subtask : null
+
+  const [title, setTitle] = useState(subtask?.title ?? '')
+  const [description, setDescription] = useState(subtask?.description ?? '')
+  const [deadline, setDeadline] = useState(subtask?.deadline ? subtask.deadline.slice(0, 10) : '')
+  const [completed, setCompleted] = useState(subtask?.completed ?? false)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    if (!props.open) return
+    setTitle(subtask?.title ?? '')
+    setDescription(subtask?.description ?? '')
+    setDeadline(subtask?.deadline ? subtask.deadline.slice(0, 10) : '')
+    setCompleted(subtask?.completed ?? false)
+    setError('')
+  }, [props.open]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function save() {
+    if (!title.trim()) { setError('Title is required'); return }
+    setSaving(true)
+    setError('')
+    try {
+      if (isEdit && subtask) {
+        const patch: Record<string, unknown> = { title: title.trim(), completed }
+        if (description.trim()) patch.description = description.trim()
+        else patch.clear_description = true
+        if (deadline) patch.deadline = deadline + 'T00:00:00.000Z'
+        else patch.clear_deadline = true
+        const updated = await api.updateSubtask(subtask.id, patch)
+        props.onUpdated(updated)
+        props.onClose()
+      } else if (!isEdit) {
+        const created = await api.createSubtask(props.parentTaskId, {
+          title: title.trim(),
+          ...(description.trim() ? { description: description.trim() } : {}),
+          ...(deadline ? { deadline: deadline + 'T00:00:00.000Z' } : {}),
+        })
+        props.onCreated(created)
+        props.onClose()
+      }
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Failed to save')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Dialog open={props.open} onOpenChange={v => !v && props.onClose()}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex flex-wrap items-center gap-1.5">
+            <CornerDownRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+            <span>{isEdit ? 'Edit subtask' : 'New subtask'}</span>
+            <span className="text-sm font-normal text-muted-foreground truncate">
+              — {props.parentTaskTitle}
+            </span>
+          </DialogTitle>
+        </DialogHeader>
+
+        <div className="space-y-4">
+          <div className="space-y-1.5">
+            <Label>Title</Label>
+            <Input
+              value={title}
+              onChange={e => setTitle(e.target.value)}
+              placeholder="Subtask title…"
+              autoFocus
+            />
+          </div>
+
+          <div className="space-y-1.5">
+            <Label>
+              Description{' '}
+              <span className="text-xs font-normal text-muted-foreground">(optional)</span>
+            </Label>
+            <Textarea
+              value={description}
+              onChange={e => setDescription(e.target.value)}
+              placeholder="Add a description…"
+              rows={2}
+            />
+          </div>
+
+          <div className="space-y-1.5">
+            <Label>
+              Deadline{' '}
+              <span className="text-xs font-normal text-muted-foreground">(optional)</span>
+            </Label>
+            <Input
+              type="date"
+              value={deadline}
+              onChange={e => setDeadline(e.target.value)}
+            />
+          </div>
+
+          {isEdit && (
+            <div className="flex items-center gap-2">
+              <Checkbox
+                id="subtask-completed"
+                checked={completed}
+                onCheckedChange={v => setCompleted(!!v)}
+              />
+              <Label htmlFor="subtask-completed" className="cursor-pointer">
+                Mark as completed
+              </Label>
+            </div>
+          )}
+
+          {error && (
+            <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              {error}
+            </div>
+          )}
+
+          <div className="flex gap-2">
+            <Button
+              onClick={save}
+              disabled={saving || !title.trim()}
+              className="flex-1 bg-gradient-to-r from-indigo-500 to-violet-600 hover:from-indigo-600 hover:to-violet-700"
+            >
+              {saving ? 'Saving…' : isEdit ? 'Save changes' : 'Create subtask'}
+            </Button>
+            {isEdit && (
+              <Button
+                variant="destructive"
+                size="icon"
+                onClick={() => { props.onDeleted(subtask!.id); props.onClose() }}
+                aria-label="Delete subtask"
+              >
+                <Trash2 className="h-4 w-4" />
+              </Button>
+            )}
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  )
+}

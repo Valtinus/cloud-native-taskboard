@@ -1,19 +1,19 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { Plus, Trash2, ArrowLeft, ChevronLeft, ChevronRight, Calendar, Palette, GitBranch } from 'lucide-react'
+import { Plus, Trash2, ArrowLeft, ChevronLeft, ChevronRight, Calendar, Palette, CornerDownRight } from 'lucide-react'
 import type { Column, Task, Subtask } from '@/lib/types'
 import { PRIORITY_CONFIG, COLUMN_COLORS } from '@/lib/types'
 import * as api from '@/lib/api'
+import { cn, fmtDate } from '@/lib/utils'
 import Navbar from '@/components/Navbar'
 import TaskModal from '@/components/TaskModal'
+import SubtaskModal from '@/components/SubtaskModal'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
-import { Checkbox } from '@/components/ui/checkbox'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
-import { cn } from '@/lib/utils'
 
 // ── types ─────────────────────────────────────────────────────────────────────
 
@@ -29,38 +29,20 @@ type ModalState =
   | { kind: 'none' }
   | { kind: 'create'; columnId: number }
   | { kind: 'edit'; task: Task }
+  | { kind: 'subtask-edit'; subtask: Subtask; parentTask: Task }
 
 // ── deadline coloring ─────────────────────────────────────────────────────────
 
-interface DeadlineStyle {
-  cardBorder: string
-  badgeBg: string
-  text: string
-  label: string
-}
+interface DeadlineStyle { cardBorder: string; badgeBg: string; text: string; label: string }
 
 function deadlineStyle(deadline: string | null): DeadlineStyle | null {
   if (!deadline) return null
-  const now  = new Date()
-  const d    = new Date(deadline + (deadline.length === 10 ? 'T12:00:00Z' : ''))
-  const days = (d.getTime() - now.getTime()) / 86_400_000
-
-  if (days < 0)   return { cardBorder: 'border-red-400 dark:border-red-600 bg-red-50/60 dark:bg-red-950/20',   badgeBg: 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300',     text: 'text-red-600 dark:text-red-400',     label: 'Overdue' }
-  if (days <= 7)  return { cardBorder: 'border-red-300 dark:border-red-600/70',                                  badgeBg: 'bg-red-50 text-red-600 dark:bg-red-900/20 dark:text-red-400',      text: 'text-red-500 dark:text-red-400',     label: '≤ 1 week' }
+  const days = (new Date(deadline.length === 10 ? deadline + 'T12:00:00Z' : deadline).getTime() - Date.now()) / 86_400_000
+  if (days < 0)   return { cardBorder: 'border-red-400 dark:border-red-600 bg-red-50/60 dark:bg-red-950/20',   badgeBg: 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300',          text: 'text-red-600 dark:text-red-400',     label: 'Overdue' }
+  if (days <= 7)  return { cardBorder: 'border-red-300 dark:border-red-600/70',                                  badgeBg: 'bg-red-50 text-red-600 dark:bg-red-900/20 dark:text-red-400',            text: 'text-red-500 dark:text-red-400',     label: '≤ 1 week' }
   if (days <= 30) return { cardBorder: 'border-orange-300 dark:border-orange-600/70',                            badgeBg: 'bg-orange-50 text-orange-600 dark:bg-orange-900/20 dark:text-orange-400', text: 'text-orange-500 dark:text-orange-400', label: '≤ 1 month' }
-  if (days <= 90) return { cardBorder: 'border-blue-300 dark:border-blue-600/70',                                badgeBg: 'bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400',   text: 'text-blue-500 dark:text-blue-400',    label: '≤ 3 months' }
-  return            { cardBorder: 'border-green-300 dark:border-green-600/70',                                   badgeBg: 'bg-green-50 text-green-600 dark:bg-green-900/20 dark:text-green-400', text: 'text-green-500 dark:text-green-400', label: '' }
-}
-
-function fmtDate(iso: string) {
-  const d = new Date(iso.length === 10 ? iso + 'T12:00:00Z' : iso)
-  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
-}
-
-// ── column color helpers ──────────────────────────────────────────────────────
-
-function colStyle(color: string | null) {
-  return COLUMN_COLORS.find(c => c.id === color) ?? COLUMN_COLORS[0]
+  if (days <= 90) return { cardBorder: 'border-blue-300 dark:border-blue-600/70',                                badgeBg: 'bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400',         text: 'text-blue-500 dark:text-blue-400',    label: '≤ 3 months' }
+  return            { cardBorder: 'border-green-300 dark:border-green-600/70',                                   badgeBg: 'bg-green-50 text-green-600 dark:bg-green-900/20 dark:text-green-400',    text: 'text-green-500 dark:text-green-400',  label: '' }
 }
 
 // ── component ─────────────────────────────────────────────────────────────────
@@ -81,7 +63,7 @@ export default function BoardDetailPage() {
   const [newColColor, setNewColColor] = useState<string | null>(null)
   const [addingCol, setAddingCol] = useState(false)
 
-  // ── load ────────────────────────────────────────────────────────────────────
+  // ── load ─────────────────────────────────────────────────────────────────────
 
   const loadBoard = useCallback(async () => {
     setLoading(true)
@@ -90,7 +72,6 @@ export default function BoardDetailPage() {
       const board = boards.find(b => b.id === boardId)
       if (!board) { navigate('/boards'); return }
       setBoardName(board.name)
-
       const withTasks = await Promise.all(
         cols.map(async col => {
           const tasks = await api.listTasks(col.id)
@@ -110,32 +91,24 @@ export default function BoardDetailPage() {
 
   useEffect(() => { loadBoard() }, [loadBoard])
 
-  // ── column actions ───────────────────────────────────────────────────────────
+  // ── column actions ────────────────────────────────────────────────────────────
 
   async function addColumn(e: React.FormEvent) {
     e.preventDefault()
     if (!newColName.trim()) return
-    setAddingCol(true)
-    setApiError('')
+    setAddingCol(true); setApiError('')
     try {
       const col = await api.createColumn(boardId, newColName.trim(), newColColor)
       setColumns(prev => [...prev, { ...col, tasks: [] }])
       setNewColName(''); setNewColColor(null); setColDialogOpen(false)
-    } catch (e: unknown) {
-      setApiError(e instanceof Error ? e.message : 'Failed to add column')
-    } finally {
-      setAddingCol(false)
-    }
+    } catch (e: unknown) { setApiError(e instanceof Error ? e.message : 'Failed') }
+    finally { setAddingCol(false) }
   }
 
   async function deleteColumn(colId: number) {
     setApiError('')
-    try {
-      await api.deleteColumn(colId)
-      setColumns(prev => prev.filter(c => c.id !== colId))
-    } catch (e: unknown) {
-      setApiError(e instanceof Error ? e.message : 'Failed to delete column')
-    }
+    try { await api.deleteColumn(colId); setColumns(prev => prev.filter(c => c.id !== colId)) }
+    catch (e: unknown) { setApiError(e instanceof Error ? e.message : 'Failed to delete column') }
   }
 
   async function moveColumn(colId: number, direction: -1 | 1) {
@@ -147,35 +120,29 @@ export default function BoardDetailPage() {
       await api.updateColumn(colId, { position: newPos })
       const cols = await api.listColumns(boardId)
       setColumns(prev => cols.map(c => ({ ...c, tasks: prev.find(p => p.id === c.id)?.tasks ?? [] })))
-    } catch (e: unknown) {
-      setApiError(e instanceof Error ? e.message : 'Failed to reorder')
-    }
+    } catch (e: unknown) { setApiError(e instanceof Error ? e.message : 'Failed to reorder') }
   }
 
   async function setColumnColor(colId: number, color: string | null) {
     try {
       const updated = await api.updateColumn(colId, color === null ? { clear_color: true } : { color })
       setColumns(prev => prev.map(c => c.id === colId ? { ...c, color: updated.color } : c))
-    } catch {
-      setApiError('Failed to update color')
-    }
+    } catch { setApiError('Failed to update color') }
   }
 
   // ── task actions ─────────────────────────────────────────────────────────────
 
   function handleTaskCreated(task: Task) {
-    setColumns(prev =>
-      prev.map(c => c.id === task.column_id ? { ...c, tasks: [...c.tasks, { ...task, subtasks: [] }] } : c)
-    )
+    setColumns(prev => prev.map(c =>
+      c.id === task.column_id ? { ...c, tasks: [...c.tasks, { ...task, subtasks: [] }] } : c
+    ))
   }
 
   function handleTaskUpdated(updated: Task) {
-    setColumns(prev =>
-      prev.map(c => ({
-        ...c,
-        tasks: c.tasks.map(t => t.id === updated.id ? { ...updated, subtasks: t.subtasks } : t),
-      }))
-    )
+    setColumns(prev => prev.map(c => ({
+      ...c,
+      tasks: c.tasks.map(t => t.id === updated.id ? { ...updated, subtasks: t.subtasks } : t),
+    })))
     if (modal.kind === 'edit') setModal({ kind: 'edit', task: updated })
   }
 
@@ -185,39 +152,44 @@ export default function BoardDetailPage() {
     setModal({ kind: 'none' })
   }
 
-  // Refresh subtasks for a task after edit modal closes
   async function refreshSubtasks(taskId: number) {
     try {
       const subtasks = await api.listSubtasks(taskId)
-      setColumns(prev =>
-        prev.map(c => ({
-          ...c,
-          tasks: c.tasks.map(t => t.id === taskId ? { ...t, subtasks } : t),
-        }))
-      )
+      setColumns(prev => prev.map(c => ({
+        ...c,
+        tasks: c.tasks.map(t => t.id === taskId ? { ...t, subtasks } : t),
+      })))
     } catch { /* silent */ }
   }
 
-  function closeModal() {
+  function closeTaskModal() {
     if (modal.kind === 'edit') refreshSubtasks(modal.task.id)
     setModal({ kind: 'none' })
   }
 
-  // ── subtask toggle (on board) ─────────────────────────────────────────────────
+  // ── subtask actions ───────────────────────────────────────────────────────────
 
-  async function toggleSubtask(taskId: number, st: Subtask) {
-    const updated = await api.updateSubtask(st.id, { completed: !st.completed })
-    setColumns(prev =>
-      prev.map(c => ({
-        ...c,
-        tasks: c.tasks.map(t =>
-          t.id === taskId ? { ...t, subtasks: t.subtasks.map(s => s.id === st.id ? updated : s) } : t
-        ),
-      }))
-    )
+  function handleSubtaskUpdated(updated: Subtask) {
+    setColumns(prev => prev.map(c => ({
+      ...c,
+      tasks: c.tasks.map(t => ({
+        ...t,
+        subtasks: t.subtasks.map(s => s.id === updated.id ? updated : s),
+      })),
+    })))
+    if (modal.kind === 'subtask-edit') setModal({ ...modal, subtask: updated })
   }
 
-  // ── render ───────────────────────────────────────────────────────────────────
+  async function handleSubtaskDeleted(subtaskId: number) {
+    await api.deleteSubtask(subtaskId)
+    setColumns(prev => prev.map(c => ({
+      ...c,
+      tasks: c.tasks.map(t => ({ ...t, subtasks: t.subtasks.filter(s => s.id !== subtaskId) })),
+    })))
+    setModal({ kind: 'none' })
+  }
+
+  // ── render ────────────────────────────────────────────────────────────────────
 
   if (loading) return <div className="min-h-screen"><Navbar /><p className="p-8 text-muted-foreground">Loading…</p></div>
   if (error)   return <div className="min-h-screen"><Navbar /><p className="p-8 text-destructive">{error}</p></div>
@@ -226,7 +198,6 @@ export default function BoardDetailPage() {
     <div className="flex min-h-screen flex-col bg-background">
       <Navbar />
 
-      {/* Board header */}
       <div className="flex items-center gap-3 border-b bg-gradient-to-r from-indigo-500/10 via-violet-500/5 to-transparent px-4 py-3 dark:from-indigo-900/20">
         <Button variant="ghost" size="icon" onClick={() => navigate('/boards')}>
           <ArrowLeft className="h-4 w-4" />
@@ -247,19 +218,15 @@ export default function BoardDetailPage() {
       {/* Kanban board */}
       <div className="flex flex-1 gap-4 overflow-x-auto p-4 pb-8">
         {columns.map((col, idx) => {
-          const cStyle = colStyle(col.color)
+          const cStyle = COLUMN_COLORS.find(c => c.id === col.color) ?? COLUMN_COLORS[0]
           return (
-            <div
-              key={col.id}
-              className={cn('flex w-72 shrink-0 flex-col rounded-xl border shadow-sm', cStyle.wrapper || 'bg-muted/40')}
-            >
+            <div key={col.id} className={cn('flex w-72 shrink-0 flex-col rounded-xl border shadow-sm', cStyle.wrapper || 'bg-muted/40')}>
               {/* Column header */}
               <div className={cn('flex items-center gap-1.5 rounded-t-xl px-3 py-2.5', cStyle.header || 'bg-muted/60')}>
                 <span className={cn('h-2.5 w-2.5 shrink-0 rounded-full', cStyle.dot || 'bg-slate-400')} />
                 <span className="flex-1 truncate text-sm font-semibold">{col.name}</span>
                 <Badge variant="secondary" className="text-xs">{col.tasks.length}</Badge>
 
-                {/* Color picker */}
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-foreground">
@@ -269,16 +236,8 @@ export default function BoardDetailPage() {
                   <DropdownMenuContent align="end" className="w-44 p-2">
                     <div className="grid grid-cols-5 gap-1.5">
                       {COLUMN_COLORS.map(c => (
-                        <button
-                          key={String(c.id)}
-                          title={c.label}
-                          onClick={() => setColumnColor(col.id, c.id)}
-                          className={cn(
-                            'h-6 w-6 rounded-full border-2 transition-transform hover:scale-110',
-                            c.dot,
-                            col.color === c.id ? 'border-foreground scale-110' : 'border-transparent'
-                          )}
-                        />
+                        <button key={String(c.id)} title={c.label} onClick={() => setColumnColor(col.id, c.id)}
+                          className={cn('h-6 w-6 rounded-full border-2 transition-transform hover:scale-110', c.dot, col.color === c.id ? 'border-foreground scale-110' : 'border-transparent')} />
                       ))}
                     </div>
                   </DropdownMenuContent>
@@ -300,77 +259,81 @@ export default function BoardDetailPage() {
               {/* Tasks + subtasks */}
               <div className="flex flex-1 flex-col gap-2 overflow-y-auto p-2">
                 {col.tasks.map(task => {
-                  const dl    = deadlineStyle(task.deadline)
-                  const pCfg  = PRIORITY_CONFIG[task.priority] ?? PRIORITY_CONFIG.medium
+                  const taskDl = deadlineStyle(task.deadline)
+                  const pCfg   = PRIORITY_CONFIG[task.priority] ?? PRIORITY_CONFIG.medium
                   return (
-                    <div key={task.id} className="flex flex-col gap-1">
-                      {/* Task card */}
+                    <div key={task.id} className="flex flex-col gap-1.5">
+                      {/* ── Task card ── */}
                       <button
                         className={cn(
                           'w-full rounded-lg border bg-background/90 p-3 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-ring',
-                          dl ? dl.cardBorder : ''
+                          taskDl ? taskDl.cardBorder : ''
                         )}
                         onClick={() => setModal({ kind: 'edit', task })}
                       >
-                        {/* Title */}
                         <p className="text-sm font-semibold leading-snug">{task.title}</p>
-
-                        {/* Description */}
                         {task.description && (
                           <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{task.description}</p>
                         )}
-
-                        {/* Priority */}
                         <div className={cn('mt-2 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold', pCfg.badge)}>
                           {pCfg.emoji} {pCfg.label}
                         </div>
-
-                        {/* Deadline */}
-                        {task.deadline && dl && (
-                          <div className={cn('mt-1.5 flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs font-medium w-fit', dl.badgeBg)}>
+                        {task.deadline && taskDl && (
+                          <div className={cn('mt-1.5 flex w-fit items-center gap-1 rounded-md px-1.5 py-0.5 text-xs font-medium', taskDl.badgeBg)}>
                             <Calendar className="h-3 w-3" />
                             {fmtDate(task.deadline)}
-                            {dl.label && <span className="opacity-75">· {dl.label}</span>}
+                            {taskDl.label && <span className="opacity-75">· {taskDl.label}</span>}
                           </div>
                         )}
-
-                        {/* Subtask count chip */}
                         {task.subtasks.length > 0 && (
                           <div className="mt-1.5 flex items-center gap-1 text-xs text-muted-foreground">
-                            <GitBranch className="h-3 w-3" />
-                            {task.subtasks.filter(s => s.completed).length}/{task.subtasks.length}
+                            <CornerDownRight className="h-3 w-3" />
+                            {task.subtasks.filter(s => s.completed).length}/{task.subtasks.length} subtasks
                           </div>
                         )}
                       </button>
 
-                      {/* Subtask rows */}
-                      {task.subtasks.map((st, stIdx) => {
+                      {/* ── Subtask cards ── */}
+                      {task.subtasks.map(st => {
                         const stDl = deadlineStyle(st.deadline)
                         return (
-                          <div
+                          <button
                             key={st.id}
                             className={cn(
-                              'ml-3 flex items-start gap-2 rounded-md border-l-2 bg-background/70 px-2.5 py-1.5 text-xs shadow-sm',
-                              stIdx === task.subtasks.length - 1 ? 'border-muted' : 'border-muted',
-                              stDl ? `border-l-2 ${stDl.cardBorder}` : 'border-l-muted-foreground/20'
+                              'ml-4 w-[calc(100%-1rem)] rounded-lg border bg-background/80 p-2.5 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-ring',
+                              stDl ? stDl.cardBorder : ''
                             )}
+                            onClick={() => setModal({ kind: 'subtask-edit', subtask: st, parentTask: task })}
                           >
-                            <Checkbox
-                              checked={st.completed}
-                              onCheckedChange={() => toggleSubtask(task.id, st)}
-                              className="mt-0.5 h-3.5 w-3.5 shrink-0"
-                            />
-                            <div className="min-w-0 flex-1">
-                              <p className={cn('leading-snug', st.completed && 'line-through text-muted-foreground')}>
-                                {st.title}
-                              </p>
+                            {/* Parent task indicator */}
+                            <div className="mb-1 flex items-center gap-1 text-xs text-muted-foreground">
+                              <CornerDownRight className="h-3 w-3 shrink-0" />
+                              <span className="truncate">{task.title}</span>
+                            </div>
+
+                            {/* Subtask title */}
+                            <p className={cn('text-sm font-medium leading-snug', st.completed && 'line-through text-muted-foreground')}>
+                              {st.title}
+                            </p>
+
+                            {st.description && (
+                              <p className="mt-1 line-clamp-1 text-xs text-muted-foreground">{st.description}</p>
+                            )}
+
+                            {/* Status + deadline */}
+                            <div className="mt-1.5 flex items-center gap-2">
+                              <span className={cn('text-xs font-medium', st.completed ? 'text-emerald-600 dark:text-emerald-400' : 'text-muted-foreground')}>
+                                {st.completed ? '✓ Done' : '○ Open'}
+                              </span>
                               {st.deadline && stDl && (
-                                <span className={cn('text-xs', stDl.text)}>
-                                  📅 {fmtDate(st.deadline)}
-                                </span>
+                                <div className={cn('flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs font-medium', stDl.badgeBg)}>
+                                  <Calendar className="h-3 w-3" />
+                                  {fmtDate(st.deadline)}
+                                  {stDl.label && <span className="opacity-75">· {stDl.label}</span>}
+                                </div>
                               )}
                             </div>
-                          </div>
+                          </button>
                         )
                       })}
                     </div>
@@ -378,14 +341,9 @@ export default function BoardDetailPage() {
                 })}
               </div>
 
-              {/* Add task */}
               <div className="p-2 pt-0">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="w-full justify-start text-muted-foreground hover:text-foreground"
-                  onClick={() => setModal({ kind: 'create', columnId: col.id })}
-                >
+                <Button variant="ghost" size="sm" className="w-full justify-start text-muted-foreground hover:text-foreground"
+                  onClick={() => setModal({ kind: 'create', columnId: col.id })}>
                   <Plus className="mr-1 h-4 w-4" /> Add task
                 </Button>
               </div>
@@ -400,24 +358,26 @@ export default function BoardDetailPage() {
         )}
       </div>
 
-      {/* Task modal */}
+      {/* Task modals */}
       {modal.kind === 'create' && (
-        <TaskModal
-          mode="create"
-          columnId={modal.columnId}
-          open
-          onClose={closeModal}
-          onCreated={t => { handleTaskCreated(t); setModal({ kind: 'none' }) }}
-        />
+        <TaskModal mode="create" columnId={modal.columnId} open onClose={() => setModal({ kind: 'none' })}
+          onCreated={t => { handleTaskCreated(t); setModal({ kind: 'none' }) }} />
       )}
       {modal.kind === 'edit' && (
-        <TaskModal
+        <TaskModal mode="edit" task={modal.task} open onClose={closeTaskModal}
+          onUpdated={handleTaskUpdated} onDeleted={handleTaskDeleted} />
+      )}
+
+      {/* Subtask edit modal (opened from board card) */}
+      {modal.kind === 'subtask-edit' && (
+        <SubtaskModal
           mode="edit"
-          task={modal.task}
+          subtask={modal.subtask}
+          parentTaskTitle={modal.parentTask.title}
           open
-          onClose={closeModal}
-          onUpdated={handleTaskUpdated}
-          onDeleted={handleTaskDeleted}
+          onClose={() => setModal({ kind: 'none' })}
+          onUpdated={handleSubtaskUpdated}
+          onDeleted={handleSubtaskDeleted}
         />
       )}
 
@@ -426,38 +386,20 @@ export default function BoardDetailPage() {
         <DialogContent>
           <DialogHeader><DialogTitle>Add column</DialogTitle></DialogHeader>
           <form onSubmit={addColumn} className="space-y-4">
-            <Input
-              placeholder="Column name"
-              value={newColName}
-              onChange={e => setNewColName(e.target.value)}
-              maxLength={50}
-              autoFocus
-            />
+            <Input placeholder="Column name" value={newColName} onChange={e => setNewColName(e.target.value)} maxLength={50} autoFocus />
             <div className="space-y-1.5">
               <p className="text-sm font-medium">Color</p>
               <div className="flex flex-wrap gap-2">
                 {COLUMN_COLORS.map(c => (
-                  <button
-                    type="button"
-                    key={String(c.id)}
-                    title={c.label}
-                    onClick={() => setNewColColor(c.id)}
-                    className={cn(
-                      'h-7 w-7 rounded-full border-2 transition-transform hover:scale-110',
-                      c.dot,
-                      newColColor === c.id ? 'border-foreground scale-110' : 'border-transparent'
-                    )}
-                  />
+                  <button type="button" key={String(c.id)} title={c.label} onClick={() => setNewColColor(c.id)}
+                    className={cn('h-7 w-7 rounded-full border-2 transition-transform hover:scale-110', c.dot, newColColor === c.id ? 'border-foreground scale-110' : 'border-transparent')} />
                 ))}
               </div>
             </div>
             <div className="flex justify-end gap-2">
               <Button type="button" variant="outline" onClick={() => setColDialogOpen(false)}>Cancel</Button>
-              <Button
-                type="submit"
-                disabled={addingCol || !newColName.trim()}
-                className="bg-gradient-to-r from-indigo-500 to-violet-600 hover:from-indigo-600 hover:to-violet-700"
-              >
+              <Button type="submit" disabled={addingCol || !newColName.trim()}
+                className="bg-gradient-to-r from-indigo-500 to-violet-600 hover:from-indigo-600 hover:to-violet-700">
                 {addingCol ? 'Adding…' : 'Add column'}
               </Button>
             </div>
