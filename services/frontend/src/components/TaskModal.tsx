@@ -10,7 +10,6 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Label } from '@/components/ui/label'
-import { Checkbox } from '@/components/ui/checkbox'
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -92,11 +91,6 @@ export default function TaskModal(props: Props) {
     }
   }
 
-  async function toggleSubtask(st: Subtask) {
-    const updated = await api.updateSubtask(st.id, { completed: !st.completed })
-    setSubtasks(prev => prev.map(s => (s.id === st.id ? updated : s)))
-  }
-
   async function deleteSubtask(id: number) {
     await api.deleteSubtask(id)
     setSubtasks(prev => prev.filter(s => s.id !== id))
@@ -176,28 +170,17 @@ export default function TaskModal(props: Props) {
                   <div className="flex items-center justify-between">
                     <Label>Subtasks</Label>
                     {subtasks.length > 0 && (
-                      <span className="text-xs text-muted-foreground">
-                        {subtasks.filter(s => s.completed).length}/{subtasks.length} done
-                      </span>
+                      <span className="text-xs text-muted-foreground">{subtasks.length} total</span>
                     )}
                   </div>
-
-                  {subtasks.length > 0 && (
-                    <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
-                      <div className="h-full rounded-full bg-gradient-to-r from-indigo-500 to-violet-600 transition-all"
-                        style={{ width: `${(subtasks.filter(s => s.completed).length / subtasks.length) * 100}%` }} />
-                    </div>
-                  )}
 
                   {subtasks.map(st => {
                     const sCfg = PRIORITY_CONFIG[st.priority] ?? PRIORITY_CONFIG.medium
                     return (
                       <div key={st.id} className="group flex cursor-pointer items-start gap-2 rounded-md px-2 py-1.5 hover:bg-muted/50"
                         onClick={() => setEditingSubtask(st)}>
-                        <Checkbox checked={st.completed} onCheckedChange={() => toggleSubtask(st)}
-                          className="mt-0.5" onClick={e => e.stopPropagation()} />
                         <div className="flex-1 min-w-0">
-                          <p className={cn('text-sm leading-snug', st.completed && 'line-through text-muted-foreground')}>{st.title}</p>
+                          <p className="text-sm leading-snug">{st.title}</p>
                           <div className="mt-0.5 flex flex-wrap items-center gap-2">
                             <span className={cn('text-xs font-medium', sCfg.badge.split(' ').slice(0,2).join(' '))}>
                               {sCfg.emoji} {sCfg.label}

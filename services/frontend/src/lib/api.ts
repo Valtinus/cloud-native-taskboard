@@ -80,6 +80,7 @@ export const deleteTask = (id: number) => request(`/tasks/${id}`, { method: 'DEL
 
 // Subtasks
 export const listSubtasks = (taskId: number) => json<Subtask[]>(`/tasks/${taskId}/subtasks`)
+export const listSubtasksByColumn = (columnId: number) => json<Subtask[]>(`/columns/${columnId}/subtasks`)
 
 export const createSubtask = (taskId: number, data: {
   title: string

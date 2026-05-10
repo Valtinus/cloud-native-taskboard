@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -13,24 +14,70 @@ import (
 type Subtask struct {
 	ID             int        `json:"id"`
 	ParentTaskID   int        `json:"parent_task_id"`
+	ColumnID       int        `json:"column_id"`
 	Title          string     `json:"title"`
 	Description    *string    `json:"description"`
 	AssignedUserID *int       `json:"assigned_user_id"`
 	Deadline       *time.Time `json:"deadline"`
 	Priority       string     `json:"priority"`
-	Completed      bool       `json:"completed"`
 	Position       int        `json:"position"`
 	CreatedAt      time.Time  `json:"created_at"`
 }
 
-const subtaskCols = `id, parent_task_id, title, description, assigned_user_id,
-	deadline, priority, completed, position, created_at`
+const subtaskCols = `id, parent_task_id, column_id, title, description,
+	assigned_user_id, deadline, priority, position, created_at`
 
 func scanSubtask(row interface{ Scan(...any) error }, st *Subtask) error {
-	return row.Scan(&st.ID, &st.ParentTaskID, &st.Title, &st.Description,
-		&st.AssignedUserID, &st.Deadline, &st.Priority, &st.Completed, &st.Position, &st.CreatedAt)
+	return row.Scan(&st.ID, &st.ParentTaskID, &st.ColumnID, &st.Title, &st.Description,
+		&st.AssignedUserID, &st.Deadline, &st.Priority, &st.Position, &st.CreatedAt)
 }
 
+// boardIDForSubtask resolves ownership via the subtask's own column_id.
+func (s *Server) boardIDForSubtask(ctx context.Context, subtaskID int) (boardID, ownerID int, err error) {
+	err = s.DB.QueryRow(ctx, `
+		SELECT b.id, b.owner_id FROM boards b
+		JOIN board_columns c ON c.board_id = b.id
+		JOIN subtasks st ON st.column_id = c.id
+		WHERE st.id = $1`, subtaskID).Scan(&boardID, &ownerID)
+	return
+}
+
+// listSubtasksByColumn returns all subtasks in a column, ordered by position.
+func (s *Server) listSubtasksByColumn(w http.ResponseWriter, r *http.Request) {
+	uid, ok := callerID(r)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	columnID, err := strconv.Atoi(r.PathValue("id"))
+	if err != nil {
+		notFound(w)
+		return
+	}
+	_, ownerID, err := s.boardIDForColumn(r.Context(), columnID)
+	if errors.Is(err, pgx.ErrNoRows) || ownerID != uid {
+		notFound(w)
+		return
+	}
+	rows, err := s.DB.Query(r.Context(),
+		`SELECT `+subtaskCols+` FROM subtasks WHERE column_id = $1 ORDER BY position`,
+		columnID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	defer rows.Close()
+
+	subtasks := []Subtask{}
+	for rows.Next() {
+		var st Subtask
+		scanSubtask(rows, &st)
+		subtasks = append(subtasks, st)
+	}
+	writeJSON(w, http.StatusOK, subtasks)
+}
+
+// listSubtasks returns all subtasks of a task (regardless of column).
 func (s *Server) listSubtasks(w http.ResponseWriter, r *http.Request) {
 	uid, ok := callerID(r)
 	if !ok {
@@ -88,6 +135,7 @@ func (s *Server) createSubtask(w http.ResponseWriter, r *http.Request) {
 		AssignedUserID *int       `json:"assigned_user_id"`
 		Deadline       *time.Time `json:"deadline"`
 		Priority       string     `json:"priority"`
+		ColumnID       *int       `json:"column_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Title == "" {
 		writeError(w, http.StatusBadRequest, "title required")
@@ -105,7 +153,25 @@ func (s *Server) createSubtask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pos, err := s.nextSubtaskPos(r.Context(), taskID)
+	// Resolve column: use provided column_id or fall back to parent task's column.
+	var columnID int
+	if req.ColumnID != nil {
+		_, colOwner, err := s.boardIDForColumn(r.Context(), *req.ColumnID)
+		if errors.Is(err, pgx.ErrNoRows) || colOwner != uid {
+			writeError(w, http.StatusBadRequest, "column not found")
+			return
+		}
+		columnID = *req.ColumnID
+	} else {
+		if err := s.DB.QueryRow(r.Context(),
+			`SELECT column_id FROM tasks WHERE id = $1`, taskID,
+		).Scan(&columnID); err != nil {
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+	}
+
+	pos, err := s.nextSubtaskPos(r.Context(), columnID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
@@ -113,10 +179,11 @@ func (s *Server) createSubtask(w http.ResponseWriter, r *http.Request) {
 
 	var st Subtask
 	err = scanSubtask(s.DB.QueryRow(r.Context(),
-		`INSERT INTO subtasks (parent_task_id, title, description, assigned_user_id, deadline, priority, position)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7)
+		`INSERT INTO subtasks
+		   (parent_task_id, column_id, title, description, assigned_user_id, deadline, priority, position)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		 RETURNING `+subtaskCols,
-		taskID, req.Title, req.Description, req.AssignedUserID, req.Deadline, req.Priority, pos,
+		taskID, columnID, req.Title, req.Description, req.AssignedUserID, req.Deadline, req.Priority, pos,
 	), &st)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -174,7 +241,7 @@ func (s *Server) updateSubtask(w http.ResponseWriter, r *http.Request) {
 		Deadline       *time.Time `json:"deadline"`
 		ClearDeadline  bool       `json:"clear_deadline"`
 		Priority       *string    `json:"priority"`
-		Completed      *bool      `json:"completed"`
+		ColumnID       *int       `json:"column_id"`
 		Position       *int       `json:"position"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -188,6 +255,13 @@ func (s *Server) updateSubtask(w http.ResponseWriter, r *http.Request) {
 	if req.AssignedUserID != nil && !s.validateAssignee(r.Context(), *req.AssignedUserID) {
 		writeError(w, http.StatusBadRequest, "assigned_user_id does not exist")
 		return
+	}
+	if req.ColumnID != nil {
+		_, colOwner, err := s.boardIDForColumn(r.Context(), *req.ColumnID)
+		if errors.Is(err, pgx.ErrNoRows) || colOwner != uid {
+			writeError(w, http.StatusBadRequest, "column not found")
+			return
+		}
 	}
 
 	ctx := r.Context()
@@ -212,8 +286,8 @@ func (s *Server) updateSubtask(w http.ResponseWriter, r *http.Request) {
 	if req.Priority != nil {
 		s.DB.Exec(ctx, `UPDATE subtasks SET priority = $1 WHERE id = $2`, *req.Priority, id)
 	}
-	if req.Completed != nil {
-		s.DB.Exec(ctx, `UPDATE subtasks SET completed = $1 WHERE id = $2`, *req.Completed, id)
+	if req.ColumnID != nil {
+		s.DB.Exec(ctx, `UPDATE subtasks SET column_id = $1 WHERE id = $2`, *req.ColumnID, id)
 	}
 	if req.Position != nil {
 		s.DB.Exec(ctx, `UPDATE subtasks SET position = $1 WHERE id = $2`, *req.Position, id)

@@ -38,12 +38,12 @@ export interface Task {
 export interface Subtask {
   id: number
   parent_task_id: number
+  column_id: number
   title: string
   description: string | null
   assigned_user_id: number | null
   deadline: string | null
   priority: Priority
-  completed: boolean
   position: number
   created_at: string
 }

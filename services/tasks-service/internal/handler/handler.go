@@ -50,12 +50,12 @@ CREATE TABLE IF NOT EXISTS tasks (
 CREATE TABLE IF NOT EXISTS subtasks (
   id               SERIAL PRIMARY KEY,
   parent_task_id   INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  column_id        INTEGER NOT NULL REFERENCES board_columns(id) ON DELETE CASCADE,
   title            VARCHAR(200) NOT NULL,
   description      TEXT,
   assigned_user_id INTEGER,
   deadline         TIMESTAMP,
   priority         VARCHAR(10) NOT NULL DEFAULT 'medium',
-  completed        BOOLEAN NOT NULL DEFAULT FALSE,
   position         INTEGER NOT NULL,
   created_at       TIMESTAMP DEFAULT NOW()
 );
@@ -69,7 +69,12 @@ CREATE INDEX IF NOT EXISTS idx_subtasks_assignee ON subtasks(assigned_user_id);
 -- Idempotent upgrades for existing databases
 ALTER TABLE board_columns ADD COLUMN IF NOT EXISTS color    VARCHAR(20);
 ALTER TABLE tasks         ADD COLUMN IF NOT EXISTS priority VARCHAR(10) NOT NULL DEFAULT 'medium';
-ALTER TABLE subtasks      ADD COLUMN IF NOT EXISTS priority VARCHAR(10) NOT NULL DEFAULT 'medium';
+ALTER TABLE subtasks      ADD COLUMN IF NOT EXISTS priority  VARCHAR(10) NOT NULL DEFAULT 'medium';
+ALTER TABLE subtasks      ADD COLUMN IF NOT EXISTS column_id INTEGER REFERENCES board_columns(id) ON DELETE CASCADE;
+-- Populate column_id for existing rows (place them in their parent task's column)
+UPDATE subtasks s SET column_id = (SELECT column_id FROM tasks WHERE id = s.parent_task_id) WHERE s.column_id IS NULL;
+ALTER TABLE subtasks      DROP COLUMN IF EXISTS completed;
+CREATE INDEX IF NOT EXISTS idx_subtasks_column ON subtasks(column_id);
 `
 
 func (s *Server) Migrate(ctx context.Context) error {
@@ -97,6 +102,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /tasks/{id}", s.updateTask)
 	mux.HandleFunc("DELETE /tasks/{id}", s.deleteTask)
 	// subtasks
+	mux.HandleFunc("GET /columns/{id}/subtasks", s.listSubtasksByColumn)
 	mux.HandleFunc("GET /tasks/{id}/subtasks", s.listSubtasks)
 	mux.HandleFunc("POST /tasks/{id}/subtasks", s.createSubtask)
 	mux.HandleFunc("GET /subtasks/{id}", s.getSubtask)
@@ -153,15 +159,6 @@ func (s *Server) boardIDForTask(ctx context.Context, taskID int) (boardID, owner
 	return
 }
 
-func (s *Server) boardIDForSubtask(ctx context.Context, subtaskID int) (boardID, ownerID int, err error) {
-	err = s.DB.QueryRow(ctx, `
-		SELECT b.id, b.owner_id FROM boards b
-		JOIN board_columns c ON c.board_id = b.id
-		JOIN tasks t ON t.column_id = c.id
-		JOIN subtasks st ON st.parent_task_id = t.id
-		WHERE st.id = $1`, subtaskID).Scan(&boardID, &ownerID)
-	return
-}
 
 // ── next-position helpers ─────────────────────────────────────────────────────
 
@@ -183,9 +180,9 @@ func (s *Server) nextTaskPos(ctx context.Context, columnID int) (int, error) {
 	return *max + 1, err
 }
 
-func (s *Server) nextSubtaskPos(ctx context.Context, taskID int) (int, error) {
+func (s *Server) nextSubtaskPos(ctx context.Context, columnID int) (int, error) {
 	var max *int
-	err := s.DB.QueryRow(ctx, `SELECT MAX(position) FROM subtasks WHERE parent_task_id = $1`, taskID).Scan(&max)
+	err := s.DB.QueryRow(ctx, `SELECT MAX(position) FROM subtasks WHERE column_id = $1`, columnID).Scan(&max)
 	if max == nil {
 		return 0, err
 	}

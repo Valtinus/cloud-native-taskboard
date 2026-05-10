@@ -23,14 +23,20 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from '@/compon
 
 // ── types ─────────────────────────────────────────────────────────────────────
 
-interface TaskWithSubtasks extends Task { subtasks: Subtask[] }
-interface ColumnWithTasks  extends Column { tasks: TaskWithSubtasks[] }
+interface ColumnData extends Column {
+  tasks: Task[]
+  subtasks: Subtask[]
+}
+
+type DragItem =
+  | { kind: 'task';    item: Task }
+  | { kind: 'subtask'; item: Subtask }
 
 type ModalState =
   | { kind: 'none' }
-  | { kind: 'create'; columnId: number }
-  | { kind: 'edit';   task: Task }
-  | { kind: 'subtask-edit'; subtask: Subtask; parentTask: Task }
+  | { kind: 'create';       columnId: number }
+  | { kind: 'edit';         task: Task }
+  | { kind: 'subtask-edit'; subtask: Subtask; parentTaskTitle: string }
 
 // ── deadline coloring ─────────────────────────────────────────────────────────
 
@@ -46,7 +52,7 @@ function deadlineStyle(deadline: string | null): DL | null {
   return            { cardBorder: 'border-green-300 dark:border-green-600/70',                                   badgeBg: 'bg-green-50 text-green-600 dark:bg-green-900/20 dark:text-green-400',    label: '' }
 }
 
-// ── shared card component ─────────────────────────────────────────────────────
+// ── shared card ───────────────────────────────────────────────────────────────
 
 interface CardProps {
   title: string
@@ -54,12 +60,12 @@ interface CardProps {
   priority: Task['priority']
   deadline: string | null
   parentLabel?: string
-  subtaskLine?: string
-  onClick: () => void
+  subtaskCount?: number
   dimmed?: boolean
+  onClick: () => void
 }
 
-function TaskCard({ title, description, priority, deadline, parentLabel, subtaskLine, onClick, dimmed }: CardProps) {
+function TaskCard({ title, description, priority, deadline, parentLabel, subtaskCount, dimmed, onClick }: CardProps) {
   const dl   = deadlineStyle(deadline)
   const pCfg = PRIORITY_CONFIG[priority] ?? PRIORITY_CONFIG.medium
   return (
@@ -89,15 +95,21 @@ function TaskCard({ title, description, priority, deadline, parentLabel, subtask
           {dl.label && <span className="opacity-75">· {dl.label}</span>}
         </div>
       )}
-      {subtaskLine && <p className="mt-1.5 text-xs text-muted-foreground">{subtaskLine}</p>}
+      {subtaskCount !== undefined && subtaskCount > 0 && (
+        <p className="mt-1.5 text-xs text-muted-foreground">↳ {subtaskCount} subtask{subtaskCount !== 1 ? 's' : ''}</p>
+      )}
     </div>
   )
 }
 
-// ── draggable task wrapper ────────────────────────────────────────────────────
+// ── draggable wrapper ─────────────────────────────────────────────────────────
 
-function DraggableTask({ id, task, children }: { id: string; task: Task; children: (isDragging: boolean) => React.ReactNode }) {
-  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id, data: { task } })
+function Draggable({ dragId, data, children }: {
+  dragId: string
+  data: DragItem
+  children: (isDragging: boolean) => React.ReactNode
+}) {
+  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id: dragId, data })
   const style = transform ? { transform: CSS.Translate.toString(transform) } : undefined
   return (
     <div ref={setNodeRef} style={style} {...attributes} {...listeners} className="touch-none">
@@ -106,7 +118,7 @@ function DraggableTask({ id, task, children }: { id: string; task: Task; childre
   )
 }
 
-// ── droppable column area ─────────────────────────────────────────────────────
+// ── droppable column ──────────────────────────────────────────────────────────
 
 function DroppableArea({ columnId, children, className }: { columnId: number; children: React.ReactNode; className?: string }) {
   const { setNodeRef, isOver } = useDroppable({ id: `col-${columnId}`, data: { columnId } })
@@ -121,25 +133,27 @@ function DroppableArea({ columnId, children, className }: { columnId: number; ch
 
 export default function BoardDetailPage() {
   const { id } = useParams<{ id: string }>()
-  const navigate  = useNavigate()
-  const boardId   = Number(id)
+  const navigate = useNavigate()
+  const boardId  = Number(id)
 
-  const [boardName, setBoardName] = useState('')
-  const [columns, setColumns]     = useState<ColumnWithTasks[]>([])
-  const [loading, setLoading]     = useState(true)
-  const [error, setError]         = useState('')
-  const [apiError, setApiError]   = useState('')
-  const [modal, setModal]         = useState<ModalState>({ kind: 'none' })
+  const [boardName, setBoardName]         = useState('')
+  const [columns, setColumns]             = useState<ColumnData[]>([])
+  const [loading, setLoading]             = useState(true)
+  const [error, setError]                 = useState('')
+  const [apiError, setApiError]           = useState('')
+  const [modal, setModal]                 = useState<ModalState>({ kind: 'none' })
   const [colDialogOpen, setColDialogOpen] = useState(false)
   const [newColName, setNewColName]       = useState('')
   const [newColColor, setNewColColor]     = useState<string | null>(null)
   const [addingCol, setAddingCol]         = useState(false)
+  const [activeItem, setActiveItem]       = useState<DragItem | null>(null)
 
-  // drag state
-  const [activeTask, setActiveTask] = useState<TaskWithSubtasks | null>(null)
+  // Map of taskId -> Task for parent label lookups across all columns
+  const [taskMap, setTaskMap] = useState<Map<number, Task>>(new Map())
+
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }))
 
-  // ── load ────────────────────────────────────────────────────────────────────
+  // ── load ─────────────────────────────────────────────────────────────────────
 
   const loadBoard = useCallback(async () => {
     setLoading(true)
@@ -148,16 +162,22 @@ export default function BoardDetailPage() {
       const board = boards.find(b => b.id === boardId)
       if (!board) { navigate('/boards'); return }
       setBoardName(board.name)
-      const withTasks = await Promise.all(
+
+      const colData: ColumnData[] = await Promise.all(
         cols.map(async col => {
-          const tasks = await api.listTasks(col.id)
-          const tasksWithSubs: TaskWithSubtasks[] = await Promise.all(
-            tasks.map(async t => ({ ...t, subtasks: await api.listSubtasks(t.id) }))
-          )
-          return { ...col, tasks: tasksWithSubs }
+          const [tasks, subtasks] = await Promise.all([
+            api.listTasks(col.id),
+            api.listSubtasksByColumn(col.id),
+          ])
+          return { ...col, tasks, subtasks }
         })
       )
-      setColumns(withTasks)
+      setColumns(colData)
+
+      // Build global task map for parent-label resolution
+      const map = new Map<number, Task>()
+      colData.forEach(c => c.tasks.forEach(t => map.set(t.id, t)))
+      setTaskMap(map)
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Failed to load')
     } finally {
@@ -167,38 +187,44 @@ export default function BoardDetailPage() {
 
   useEffect(() => { loadBoard() }, [loadBoard])
 
-  // ── drag handlers ────────────────────────────────────────────────────────────
+  // ── drag ──────────────────────────────────────────────────────────────────────
 
   function handleDragStart({ active }: DragStartEvent) {
-    const task = (active.data.current as { task: TaskWithSubtasks }).task
-    setActiveTask(task)
+    setActiveItem(active.data.current as DragItem)
   }
 
   async function handleDragEnd({ active, over }: DragEndEvent) {
-    setActiveTask(null)
+    setActiveItem(null)
     if (!over) return
-    const task = (active.data.current as { task: Task }).task
+    const dragged = active.data.current as DragItem
     const newColId = (over.data.current as { columnId: number }).columnId
-    if (!newColId || task.column_id === newColId) return
+    if (!newColId) return
 
-    // optimistic move
-    setColumns(prev => prev.map(c => {
-      if (c.tasks.some(t => t.id === task.id) && c.id !== newColId)
-        return { ...c, tasks: c.tasks.filter(t => t.id !== task.id) }
-      if (c.id === newColId)
-        return { ...c, tasks: [...c.tasks, { ...task, column_id: newColId, subtasks: (task as TaskWithSubtasks).subtasks ?? [] }] }
-      return c
-    }))
+    if (dragged.kind === 'task') {
+      const task = dragged.item
+      if (task.column_id === newColId) return
+      setColumns(prev => prev.map(c => {
+        if (c.id === task.column_id) return { ...c, tasks: c.tasks.filter(t => t.id !== task.id) }
+        if (c.id === newColId)       return { ...c, tasks: [...c.tasks, { ...task, column_id: newColId }] }
+        return c
+      }))
+      try { await api.updateTask(task.id, { column_id: newColId }) }
+      catch { setApiError('Failed to move task'); loadBoard() }
 
-    try {
-      await api.updateTask(task.id, { column_id: newColId })
-    } catch {
-      setApiError('Failed to move task')
-      loadBoard() // revert
+    } else {
+      const st = dragged.item
+      if (st.column_id === newColId) return
+      setColumns(prev => prev.map(c => {
+        if (c.id === st.column_id) return { ...c, subtasks: c.subtasks.filter(s => s.id !== st.id) }
+        if (c.id === newColId)     return { ...c, subtasks: [...c.subtasks, { ...st, column_id: newColId }] }
+        return c
+      }))
+      try { await api.updateSubtask(st.id, { column_id: newColId }) }
+      catch { setApiError('Failed to move subtask'); loadBoard() }
     }
   }
 
-  // ── column actions ────────────────────────────────────────────────────────────
+  // ── column actions ─────────────────────────────────────────────────────────────
 
   async function addColumn(e: React.FormEvent) {
     e.preventDefault()
@@ -206,7 +232,7 @@ export default function BoardDetailPage() {
     setAddingCol(true); setApiError('')
     try {
       const col = await api.createColumn(boardId, newColName.trim(), newColColor)
-      setColumns(prev => [...prev, { ...col, tasks: [] }])
+      setColumns(prev => [...prev, { ...col, tasks: [], subtasks: [] }])
       setNewColName(''); setNewColColor(null); setColDialogOpen(false)
     } catch (e: unknown) { setApiError(e instanceof Error ? e.message : 'Failed') }
     finally { setAddingCol(false) }
@@ -224,7 +250,7 @@ export default function BoardDetailPage() {
     try {
       await api.updateColumn(colId, { position: newPos })
       const cols = await api.listColumns(boardId)
-      setColumns(prev => cols.map(c => ({ ...c, tasks: prev.find(p => p.id === c.id)?.tasks ?? [] })))
+      setColumns(prev => cols.map(c => ({ ...c, tasks: prev.find(p => p.id === c.id)?.tasks ?? [], subtasks: prev.find(p => p.id === c.id)?.subtasks ?? [] })))
     } catch { setApiError('Failed to reorder') }
   }
 
@@ -235,12 +261,11 @@ export default function BoardDetailPage() {
     } catch { setApiError('Failed to update color') }
   }
 
-  // ── task actions ──────────────────────────────────────────────────────────────
+  // ── task actions ───────────────────────────────────────────────────────────────
 
   function handleTaskCreated(task: Task) {
-    setColumns(prev => prev.map(c =>
-      c.id === task.column_id ? { ...c, tasks: [...c.tasks, { ...task, subtasks: [] }] } : c
-    ))
+    setColumns(prev => prev.map(c => c.id === task.column_id ? { ...c, tasks: [...c.tasks, task] } : c))
+    setTaskMap(prev => new Map(prev).set(task.id, task))
   }
 
   function handleTaskUpdated(updated: Task) {
@@ -248,50 +273,40 @@ export default function BoardDetailPage() {
       const had = c.tasks.some(t => t.id === updated.id)
       const willHave = c.id === updated.column_id
       if (had && !willHave) return { ...c, tasks: c.tasks.filter(t => t.id !== updated.id) }
-      if (!had && willHave) return { ...c, tasks: [...c.tasks, { ...updated, subtasks: [] }] }
-      return { ...c, tasks: c.tasks.map(t => t.id === updated.id ? { ...updated, subtasks: t.subtasks } : t) }
+      if (!had && willHave) return { ...c, tasks: [...c.tasks, updated] }
+      return { ...c, tasks: c.tasks.map(t => t.id === updated.id ? updated : t) }
     }))
+    setTaskMap(prev => new Map(prev).set(updated.id, updated))
     if (modal.kind === 'edit') setModal({ kind: 'edit', task: updated })
   }
 
   async function handleTaskDeleted(taskId: number) {
     await api.deleteTask(taskId)
     setColumns(prev => prev.map(c => ({ ...c, tasks: c.tasks.filter(t => t.id !== taskId) })))
-    setModal({ kind: 'none' })
-  }
-
-  async function refreshSubtasks(taskId: number) {
-    try {
-      const subtasks = await api.listSubtasks(taskId)
-      setColumns(prev => prev.map(c => ({
-        ...c, tasks: c.tasks.map(t => t.id === taskId ? { ...t, subtasks } : t),
-      })))
-    } catch { /* silent */ }
-  }
-
-  function closeTaskModal() {
-    if (modal.kind === 'edit') refreshSubtasks(modal.task.id)
+    setTaskMap(prev => { const m = new Map(prev); m.delete(taskId); return m })
     setModal({ kind: 'none' })
   }
 
   // ── subtask actions ────────────────────────────────────────────────────────────
 
   function handleSubtaskUpdated(updated: Subtask) {
-    setColumns(prev => prev.map(c => ({
-      ...c, tasks: c.tasks.map(t => ({ ...t, subtasks: t.subtasks.map(s => s.id === updated.id ? updated : s) })),
-    })))
+    setColumns(prev => prev.map(c => {
+      const had = c.subtasks.some(s => s.id === updated.id)
+      const willHave = c.id === updated.column_id
+      if (had && !willHave) return { ...c, subtasks: c.subtasks.filter(s => s.id !== updated.id) }
+      if (!had && willHave) return { ...c, subtasks: [...c.subtasks, updated] }
+      return { ...c, subtasks: c.subtasks.map(s => s.id === updated.id ? updated : s) }
+    }))
     if (modal.kind === 'subtask-edit') setModal({ ...modal, subtask: updated })
   }
 
   async function handleSubtaskDeleted(id: number) {
     await api.deleteSubtask(id)
-    setColumns(prev => prev.map(c => ({
-      ...c, tasks: c.tasks.map(t => ({ ...t, subtasks: t.subtasks.filter(s => s.id !== id) })),
-    })))
+    setColumns(prev => prev.map(c => ({ ...c, subtasks: c.subtasks.filter(s => s.id !== id) })))
     setModal({ kind: 'none' })
   }
 
-  // ── render ─────────────────────────────────────────────────────────────────────
+  // ── render ──────────────────────────────────────────────────────────────────────
 
   if (loading) return <div className="min-h-screen"><Navbar /><p className="p-8 text-muted-foreground">Loading…</p></div>
   if (error)   return <div className="min-h-screen"><Navbar /><p className="p-8 text-destructive">{error}</p></div>
@@ -318,13 +333,18 @@ export default function BoardDetailPage() {
         <div className="flex flex-1 gap-4 overflow-x-auto p-4 pb-8">
           {columns.map((col, idx) => {
             const cStyle = COLUMN_COLORS.find(c => c.id === col.color) ?? COLUMN_COLORS[0]
+            // Count subtasks of each task in this column for the badge
+            const subtaskCountByTask = new Map<number, number>()
+            columns.forEach(c => c.subtasks.forEach(st => {
+              subtaskCountByTask.set(st.parent_task_id, (subtaskCountByTask.get(st.parent_task_id) ?? 0) + 1)
+            }))
+
             return (
               <div key={col.id} className={cn('flex w-72 shrink-0 flex-col rounded-xl border shadow-sm', cStyle.wrapper || 'bg-muted/40')}>
-                {/* Column header */}
                 <div className={cn('flex items-center gap-1.5 rounded-t-xl px-3 py-2.5', cStyle.header || 'bg-muted/60')}>
                   <span className={cn('h-2.5 w-2.5 shrink-0 rounded-full', cStyle.dot || 'bg-slate-400')} />
                   <span className="flex-1 truncate text-sm font-semibold">{col.name}</span>
-                  <Badge variant="secondary" className="text-xs">{col.tasks.length}</Badge>
+                  <Badge variant="secondary" className="text-xs">{col.tasks.length + col.subtasks.length}</Badge>
 
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
@@ -356,40 +376,45 @@ export default function BoardDetailPage() {
 
                 <Separator />
 
-                {/* Tasks */}
                 <DroppableArea columnId={col.id} className="flex flex-1 flex-col gap-2 overflow-y-auto p-2">
+                  {/* Tasks */}
                   {col.tasks.map(task => (
-                    <Fragment key={task.id}>
-                      <DraggableTask id={String(task.id)} task={task}>
+                    <Fragment key={`task-${task.id}`}>
+                      <Draggable dragId={`task-${task.id}`} data={{ kind: 'task', item: task }}>
                         {isDragging => (
                           <TaskCard
                             title={task.title}
                             description={task.description}
                             priority={task.priority}
                             deadline={task.deadline}
-                            subtaskLine={task.subtasks.length > 0
-                              ? `↳ ${task.subtasks.filter(s => s.completed).length}/${task.subtasks.length} subtasks`
-                              : undefined}
+                            subtaskCount={subtaskCountByTask.get(task.id)}
                             dimmed={isDragging}
                             onClick={() => !isDragging && setModal({ kind: 'edit', task })}
                           />
                         )}
-                      </DraggableTask>
-
-                      {/* Subtasks — identical cards, no indent, just parent label */}
-                      {task.subtasks.map(st => (
-                        <TaskCard
-                          key={st.id}
-                          title={st.title}
-                          description={st.description}
-                          priority={st.priority}
-                          deadline={st.deadline}
-                          parentLabel={task.title}
-                          onClick={() => setModal({ kind: 'subtask-edit', subtask: st, parentTask: task })}
-                        />
-                      ))}
+                      </Draggable>
                     </Fragment>
                   ))}
+
+                  {/* Subtasks in this column — fully independent cards */}
+                  {col.subtasks.map(st => {
+                    const parentTitle = taskMap.get(st.parent_task_id)?.title ?? '…'
+                    return (
+                      <Draggable key={`subtask-${st.id}`} dragId={`subtask-${st.id}`} data={{ kind: 'subtask', item: st }}>
+                        {isDragging => (
+                          <TaskCard
+                            title={st.title}
+                            description={st.description}
+                            priority={st.priority}
+                            deadline={st.deadline}
+                            parentLabel={parentTitle}
+                            dimmed={isDragging}
+                            onClick={() => !isDragging && setModal({ kind: 'subtask-edit', subtask: st, parentTaskTitle: parentTitle })}
+                          />
+                        )}
+                      </Draggable>
+                    )
+                  })}
                 </DroppableArea>
 
                 <div className="p-2 pt-0">
@@ -409,15 +434,15 @@ export default function BoardDetailPage() {
           )}
         </div>
 
-        {/* Drag overlay — shows a floating card while dragging */}
         <DragOverlay>
-          {activeTask && (
-            <div className="rotate-1 opacity-95 shadow-2xl">
+          {activeItem && (
+            <div className="rotate-1 opacity-95 shadow-2xl w-72">
               <TaskCard
-                title={activeTask.title}
-                description={activeTask.description}
-                priority={activeTask.priority}
-                deadline={activeTask.deadline}
+                title={activeItem.item.title}
+                description={activeItem.item.description}
+                priority={activeItem.item.priority}
+                deadline={activeItem.item.deadline}
+                parentLabel={activeItem.kind === 'subtask' ? (taskMap.get((activeItem.item as Subtask).parent_task_id)?.title ?? '…') : undefined}
                 onClick={() => {}}
               />
             </div>
@@ -433,10 +458,12 @@ export default function BoardDetailPage() {
       )}
       {modal.kind === 'edit' && (
         <TaskModal mode="edit" task={modal.task} open
-          onClose={closeTaskModal} onUpdated={handleTaskUpdated} onDeleted={handleTaskDeleted} />
+          onClose={() => { setModal({ kind: 'none' }); loadBoard() }}
+          onUpdated={handleTaskUpdated}
+          onDeleted={handleTaskDeleted} />
       )}
       {modal.kind === 'subtask-edit' && (
-        <SubtaskModal mode="edit" subtask={modal.subtask} parentTaskTitle={modal.parentTask.title}
+        <SubtaskModal mode="edit" subtask={modal.subtask} parentTaskTitle={modal.parentTaskTitle}
           open onClose={() => setModal({ kind: 'none' })}
           onUpdated={handleSubtaskUpdated} onDeleted={handleSubtaskDeleted} />
       )}
