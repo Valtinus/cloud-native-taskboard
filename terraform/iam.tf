@@ -39,6 +39,18 @@ resource "google_project_iam_member" "deployer_gke" {
   member  = "serviceAccount:${google_service_account.github_deployer.email}"
 }
 
+resource "google_project_iam_member" "deployer_editor" {
+  project = var.project_id
+  role    = "roles/editor"
+  member  = "serviceAccount:${google_service_account.github_deployer.email}"
+}
+
+resource "google_project_iam_member" "deployer_iam_admin" {
+  project = var.project_id
+  role    = "roles/iam.securityAdmin"
+  member  = "serviceAccount:${google_service_account.github_deployer.email}"
+}
+
 resource "google_service_account_iam_member" "github_wif_binding" {
   service_account_id = google_service_account.github_deployer.name
   role               = "roles/iam.workloadIdentityUser"
