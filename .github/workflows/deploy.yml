@@ -3,9 +3,7 @@ name: Build & Deploy
 on:
   push:
     branches: [main]
-    paths:
-      - "services/**"
-      - "k8s/**"
+    paths: ["services/**"]
 
 permissions:
   id-token: write
@@ -25,7 +23,6 @@ jobs:
       tasks: ${{ steps.filter.outputs.tasks }}
       gateway: ${{ steps.filter.outputs.gateway }}
       frontend: ${{ steps.filter.outputs.frontend }}
-      k8s: ${{ steps.filter.outputs.k8s }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -40,8 +37,6 @@ jobs:
               - 'services/api-gateway/**'
             frontend:
               - 'services/frontend/**'
-            k8s:
-              - 'k8s/**'
 
   test:
     needs: detect-changes
@@ -152,67 +147,3 @@ jobs:
             -n taskboard
           kubectl rollout status deployment/${{ matrix.service }} \
             -n taskboard --timeout=5m
-
-  sync-manifests:
-    name: Sync k8s manifests
-    needs: detect-changes
-    runs-on: ubuntu-latest
-    if: needs.detect-changes.outputs.k8s == 'true'
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Authenticate to GCP
-        uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
-          service_account: ${{ vars.DEPLOYER_SA }}
-
-      - name: Set up OpenTofu
-        uses: opentofu/setup-opentofu@v1
-
-      - name: tofu init
-        working-directory: terraform
-        run: tofu init -backend-config="bucket=${{ vars.TOFU_STATE_BUCKET }}"
-        env:
-          TF_VAR_project_id: ${{ vars.GCP_PROJECT_ID }}
-          TF_VAR_github_repo: ${{ github.repository }}
-          TF_VAR_state_bucket: ${{ vars.TOFU_STATE_BUCKET }}
-
-      - name: Export Tofu outputs
-        id: tofu
-        working-directory: terraform
-        run: |
-          echo "registry=$(tofu output -raw artifact_registry_url)" >> $GITHUB_OUTPUT
-          echo "db_host=$(tofu output -raw db_host)" >> $GITHUB_OUTPUT
-          echo "project_id=$(tofu output -raw project_id)" >> $GITHUB_OUTPUT
-          echo "cluster_name=$(tofu output -raw cluster_name)" >> $GITHUB_OUTPUT
-          echo "cluster_region=$(tofu output -raw cluster_region)" >> $GITHUB_OUTPUT
-
-      - name: Get GKE credentials
-        uses: google-github-actions/get-gke-credentials@v2
-        with:
-          cluster_name: ${{ steps.tofu.outputs.cluster_name }}
-          location: ${{ steps.tofu.outputs.cluster_region }}
-
-      - name: Apply k8s manifests
-        env:
-          REGISTRY: ${{ steps.tofu.outputs.registry }}
-          DB_HOST: ${{ steps.tofu.outputs.db_host }}
-          PROJECT_ID: ${{ steps.tofu.outputs.project_id }}
-          CLUSTER_NAME: ${{ steps.tofu.outputs.cluster_name }}
-          CLUSTER_REGION: ${{ steps.tofu.outputs.cluster_region }}
-        run: |
-          envsubst '${DB_HOST}' < k8s/configmap.yaml | kubectl apply -f -
-          envsubst '${PROJECT_ID},${CLUSTER_NAME},${CLUSTER_REGION}' < k8s/cluster-secret-store.yaml | kubectl apply -f -
-          envsubst '${REGISTRY}' < k8s/deployment-users-service.yaml | kubectl apply -f -
-          envsubst '${REGISTRY}' < k8s/deployment-tasks-service.yaml | kubectl apply -f -
-          envsubst '${REGISTRY}' < k8s/deployment-api-gateway.yaml | kubectl apply -f -
-          envsubst '${REGISTRY}' < k8s/deployment-frontend.yaml | kubectl apply -f -
-          kubectl apply -f k8s/external-secret-db-credentials.yaml
-          kubectl apply -f k8s/external-secret-jwt-signing-key.yaml
-          kubectl apply -f k8s/service-users-service.yaml
-          kubectl apply -f k8s/service-tasks-service.yaml
-          kubectl apply -f k8s/service-api-gateway.yaml
-          kubectl apply -f k8s/service-frontend.yaml
-          kubectl apply -f k8s/ingress.yaml

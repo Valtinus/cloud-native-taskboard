@@ -35,7 +35,7 @@ resource "google_project_iam_member" "deployer_registry" {
 
 resource "google_project_iam_member" "deployer_gke" {
   project = var.project_id
-  role    = "roles/container.admin"
+  role    = "roles/container.developer"
   member  = "serviceAccount:${google_service_account.github_deployer.email}"
 }
 
@@ -67,29 +67,4 @@ resource "google_storage_bucket_iam_member" "deployer_state_bucket" {
   bucket = var.state_bucket
   role   = "roles/storage.objectAdmin"
   member = "serviceAccount:${google_service_account.github_deployer.email}"
-}
-
-# External Secrets Operator — dedicated SA with least-privilege Secret Manager access.
-# Bound to the ESO Kubernetes SA via Workload Identity so no key file is needed.
-resource "google_service_account" "eso" {
-  account_id   = "eso-secret-accessor"
-  display_name = "External Secrets Operator"
-}
-
-resource "google_secret_manager_secret_iam_member" "eso_db_password" {
-  secret_id = google_secret_manager_secret.db_password.secret_id
-  role      = "roles/secretmanager.secretAccessor"
-  member    = "serviceAccount:${google_service_account.eso.email}"
-}
-
-resource "google_secret_manager_secret_iam_member" "eso_jwt_signing_key" {
-  secret_id = google_secret_manager_secret.jwt_signing_key.secret_id
-  role      = "roles/secretmanager.secretAccessor"
-  member    = "serviceAccount:${google_service_account.eso.email}"
-}
-
-resource "google_service_account_iam_member" "eso_workload_identity" {
-  service_account_id = google_service_account.eso.name
-  role               = "roles/iam.workloadIdentityUser"
-  member             = "serviceAccount:${var.project_id}.svc.id.goog[external-secrets/external-secrets]"
 }
