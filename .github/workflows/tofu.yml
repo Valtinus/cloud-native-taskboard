@@ -7,6 +7,12 @@ on:
   pull_request:
     branches: [main]
     paths: ["terraform/**"]
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type APPLY to confirm infrastructure changes'
+        required: true
+        type: string
 
 permissions:
   id-token: write
@@ -19,8 +25,8 @@ env:
   TF_VAR_state_bucket: ${{ vars.TOFU_STATE_BUCKET }}
 
 jobs:
-  tofu:
-    name: Plan & Apply
+  plan:
+    name: Plan
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -67,6 +73,43 @@ jobs:
               body: output
             });
 
+      - name: Upload plan artifact
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan
+          path: terraform/tfplan
+          retention-days: 1
+
+  apply:
+    name: Apply
+    needs: plan
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' && inputs.confirm == 'APPLY'
+    defaults:
+      run:
+        working-directory: terraform
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.DEPLOYER_SA }}
+
+      - name: Set up OpenTofu
+        uses: opentofu/setup-opentofu@v1
+
+      - name: tofu init
+        run: tofu init -backend-config="bucket=${{ vars.TOFU_STATE_BUCKET }}"
+
+      - name: Download plan
+        uses: actions/download-artifact@v4
+        with:
+          name: tfplan
+          path: terraform/
+
       - name: tofu apply
-        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         run: tofu apply -auto-approve tfplan
