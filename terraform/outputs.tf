@@ -23,7 +23,15 @@ output "deployer_sa_email" {
   value       = google_service_account.github_deployer.email
 }
 
-output "load_balancer_ip" {
-  description = "External IP of the frontend LoadBalancer (may take a few minutes after apply)"
-  value       = try(kubernetes_ingress_v1.frontend.status[0].load_balancer[0].ingress[0].ip, "pending")
+output "project_id" {
+  description = "GCP project ID (used by CI/CD for envsubst in k8s/ manifests)"
+  value       = var.project_id
 }
+
+output "db_host" {
+  description = "Cloud SQL private IP (substituted into k8s/configmap.yaml by CI/CD)"
+  value       = google_sql_database_instance.main.private_ip_address
+}
+
+# Ingress is now managed by k8s/ingress.yaml — get the LB IP with:
+# kubectl get ingress taskboard-ingress -n taskboard -o jsonpath='{.status.loadBalancer.ingress[0].ip}'

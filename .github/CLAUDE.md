@@ -7,7 +7,7 @@ Two workflows live here. They have different triggers, different cadences, and d
 | File | Trigger | Does |
 |---|---|---|
 | `workflows/tofu.yml` | push/PR touching `terraform/**` (plan); `workflow_dispatch` (plan + apply) | fmt → init → validate → plan; apply only on manual dispatch with `confirm=APPLY` |
-| `workflows/deploy.yml` | push to main touching `services/**` | detect changes → test → build → push → deploy |
+| `workflows/deploy.yml` | push to main touching `services/**` or `k8s/**` | detect changes → test → build → push → deploy |
 
 ## Authentication — Workload Identity Federation
 
@@ -42,7 +42,36 @@ Set these in Settings → Secrets and variables → Actions → Variables:
 kubectl rollout undo deployment/users-service -n taskboard
 ```
 
-**`kubectl set image` not `kubectl apply`** — `apply` would conflict with Terraform's ownership of the Deployment resource. `set image` mutates only the container image field, leaving the rest of the spec under Terraform control.
+**Initial cluster setup** — after `tofu apply`, apply the full `k8s/` manifest set once to bootstrap the cluster:
+```bash
+export REGISTRY=$(tofu output -raw artifact_registry_url)
+export DB_HOST=$(tofu output -raw db_host)
+export PROJECT_ID=$(tofu output -raw project_id)
+export CLUSTER_NAME=$(tofu output -raw cluster_name)
+export CLUSTER_REGION=$(tofu output -raw cluster_region)
+
+# Files needing substitution
+envsubst '${DB_HOST}' < k8s/configmap.yaml | kubectl apply -f -
+envsubst '${PROJECT_ID},${CLUSTER_NAME},${CLUSTER_REGION}' < k8s/cluster-secret-store.yaml | kubectl apply -f -
+envsubst '${REGISTRY}' < k8s/deployment-users-service.yaml | kubectl apply -f -
+envsubst '${REGISTRY}' < k8s/deployment-tasks-service.yaml | kubectl apply -f -
+envsubst '${REGISTRY}' < k8s/deployment-api-gateway.yaml | kubectl apply -f -
+envsubst '${REGISTRY}' < k8s/deployment-frontend.yaml | kubectl apply -f -
+
+# Static files
+kubectl apply -f k8s/external-secret-db-credentials.yaml
+kubectl apply -f k8s/external-secret-jwt-signing-key.yaml
+kubectl apply -f k8s/service-users-service.yaml
+kubectl apply -f k8s/service-tasks-service.yaml
+kubectl apply -f k8s/service-api-gateway.yaml
+kubectl apply -f k8s/service-frontend.yaml
+kubectl apply -f k8s/ingress.yaml
+```
+
+**`kubectl set image` for subsequent deploys** — after the initial bootstrap, CI/CD updates only the image tag on each push. `apply` is not re-run on every push to avoid stomping on live pod state:
+```bash
+kubectl set image deployment/users-service users-service=${REGISTRY}/users-service:${SHA} -n taskboard
+```
 
 **Rollout wait** — `kubectl rollout status ... --timeout=5m` makes the workflow fail if pods do not become ready, catching broken images in CI rather than silently.
 
@@ -71,5 +100,5 @@ permissions:
 1. Add a new directory under `services/`.
 2. Add a path filter entry in `deploy.yml` under `detect-changes`.
 3. Add a matrix entry in `build-deploy`.
-4. Add a Deployment + Service in `terraform/kubernetes.tf`.
-5. Push a `:bootstrap` image manually before the first `tofu apply` that includes the new Deployment.
+4. Add `k8s/deployment-<service>.yaml` and `k8s/service-<service>.yaml`.
+5. Push a `:bootstrap` image manually before the first apply that includes the new Deployment.
