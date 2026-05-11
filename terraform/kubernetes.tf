@@ -332,15 +332,53 @@ resource "kubernetes_service" "frontend" {
   }
 }
 
+resource "tls_private_key" "frontend" {
+  algorithm = "RSA"
+  rsa_bits  = 2048
+}
+
+resource "tls_self_signed_cert" "frontend" {
+  private_key_pem = tls_private_key.frontend.private_key_pem
+
+  subject {
+    common_name  = "taskboard"
+    organization = "TaskBoard"
+  }
+
+  validity_period_hours = 8760
+
+  allowed_uses = [
+    "key_encipherment",
+    "digital_signature",
+    "server_auth",
+  ]
+}
+
+resource "kubernetes_secret" "frontend_tls" {
+  metadata {
+    name      = "frontend-tls"
+    namespace = kubernetes_namespace.taskboard.metadata[0].name
+  }
+  type = "kubernetes.io/tls"
+  data = {
+    "tls.crt" = tls_self_signed_cert.frontend.cert_pem
+    "tls.key" = tls_private_key.frontend.private_key_pem
+  }
+}
+
 resource "kubernetes_ingress_v1" "frontend" {
   metadata {
     name      = "taskboard-ingress"
     namespace = kubernetes_namespace.taskboard.metadata[0].name
     annotations = {
-      "kubernetes.io/ingress.class" = "gce"
+      "kubernetes.io/ingress.class"      = "gce"
+      "kubernetes.io/ingress.allow-http" = "false"
     }
   }
   spec {
+    tls {
+      secret_name = kubernetes_secret.frontend_tls.metadata[0].name
+    }
     default_backend {
       service {
         name = kubernetes_service.frontend.metadata[0].name
