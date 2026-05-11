@@ -6,7 +6,7 @@ Two workflows live here. They have different triggers, different cadences, and d
 
 | File | Trigger | Does |
 |---|---|---|
-| `workflows/tofu.yml` | push/PR touching `terraform/**` | fmt → init → validate → plan → apply (main only) |
+| `workflows/tofu.yml` | push/PR touching `terraform/**` (plan); `workflow_dispatch` (plan + apply) | fmt → init → validate → plan; apply only on manual dispatch with `confirm=APPLY` |
 | `workflows/deploy.yml` | push to main touching `services/**` | detect changes → test → build → push → deploy |
 
 ## Authentication — Workload Identity Federation
@@ -51,8 +51,8 @@ kubectl rollout undo deployment/users-service -n taskboard
 ## tofu.yml conventions
 
 - `tofu fmt -check -recursive` fails the workflow on unformatted HCL — always run `tofu fmt` before pushing to `terraform/`.
-- `tofu plan` runs on both push and PR.
-- `tofu apply -auto-approve` runs only on push to `main` (not on PRs).
+- `tofu plan` runs automatically on push and PR — never applies.
+- `tofu apply` only runs on `workflow_dispatch` with `confirm` input set to `APPLY`. The plan artifact is uploaded by the `plan` job and consumed by the `apply` job, so apply always uses the plan computed in that same run (no stale plan risk).
 - Plan output is posted as a PR comment via `actions/github-script` — requires `pull-requests: write` permission.
 
 ## Permissions model
