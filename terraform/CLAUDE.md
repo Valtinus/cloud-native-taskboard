@@ -128,9 +128,9 @@ attribute.repository == "<owner>/<repo>"
 ```
 pins trust to exactly this repository. The deployer SA has only:
 - `roles/artifactregistry.writer` — push images
-- `roles/container.developer` — deploy to GKE
+- `roles/container.admin` — deploy to GKE and manage RBAC (required for ESO Helm chart ClusterRole installation)
 
-No `roles/editor` or `roles/owner` — minimum necessary permissions.
+No `roles/owner` — minimum necessary permissions.
 
 ## Outputs after apply
 
