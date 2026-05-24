@@ -1,4 +1,6 @@
 resource "google_container_cluster" "main" {
+  provider = google-beta
+
   name     = "taskboard-cluster"
   location = var.region
 
@@ -20,5 +22,11 @@ resource "google_container_cluster" "main" {
 
   release_channel {
     channel = "REGULAR"
+  }
+
+  # Enables the Secret Manager CSI driver addon so pods can mount
+  # Secret Manager secrets via SecretProviderClass (Workload Identity).
+  secret_manager_config {
+    enabled = true
   }
 }

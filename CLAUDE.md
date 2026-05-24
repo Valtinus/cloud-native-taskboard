@@ -8,6 +8,7 @@ Each subdirectory has its own CLAUDE.md with details specific to that layer:
 
 - [services/CLAUDE.md](services/CLAUDE.md) — Go service conventions, env vars, DB patterns, testing
 - [terraform/CLAUDE.md](terraform/CLAUDE.md) — OpenTofu workflow, resource naming, state, providers
+- [manifests/CLAUDE.md](manifests/CLAUDE.md) — K8s YAML layout, templating, CSI secret injection
 - [.github/CLAUDE.md](.github/CLAUDE.md) — CI/CD conventions, Workload Identity Federation, path filters
 
 ## Project phases
@@ -32,7 +33,7 @@ Postgres is healthy-checked; services wait on it. The `init.sql` schema is appli
 
 ## Architecture in one paragraph
 
-The frontend (nginx + React SPA) proxies `/api/*` to the api-gateway. The gateway validates JWTs (HS256) and injects `X-User-ID` before forwarding to users-service or tasks-service over cluster-internal DNS. Neither backend service is internet-reachable. Both connect to Cloud SQL over a private VPC peering link. The JWT signing key lives in Secret Manager and is mounted as a file into the gateway and users-service pods only.
+The frontend (nginx + React SPA) proxies `/api/*` to the api-gateway. The gateway validates JWTs (HS256) and injects `X-User-ID` before forwarding to users-service or tasks-service over cluster-internal DNS. Neither backend service is internet-reachable. Both connect to Cloud SQL over a private VPC peering link. In prod, the JWT signing key and DB password live in Google Secret Manager and are injected into pods by the GKE Secret Manager CSI driver via Workload Identity — values never appear in tfstate or in any YAML. In dev (`docker compose up`), all secrets are plain env vars in [docker-compose.yml](docker-compose.yml).
 
 ## Services at a glance
 
@@ -81,6 +82,8 @@ Key invariants enforced in service code (not SQL):
 | `TASKS_SERVICE_URL` | gateway | ConfigMap |
 
 In docker-compose, all secrets are plain env vars (`dev` / `dev-only-not-for-prod-please-rotate`).
+
+In prod, the K8s `Secret` objects `db-credentials` and `jwt-signing-key` are created by the CSI driver from Secret Manager at pod startup — the Go code sees the same env var names in both environments.
 
 ## Key technology choices (settled — do not re-litigate)
 

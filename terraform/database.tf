@@ -1,13 +1,5 @@
-resource "random_password" "db_password" {
-  length  = 32
-  special = false
-}
-
-resource "random_password" "jwt_signing_key" {
-  length  = 64
-  special = true
-}
-
+# Secret Manager holds the *containers*; values are seeded out-of-band via
+# scripts/bootstrap-secrets.sh so nothing sensitive ever lands in tfstate.
 resource "google_secret_manager_secret" "db_password" {
   secret_id = "db-password"
   replication {
@@ -15,21 +7,11 @@ resource "google_secret_manager_secret" "db_password" {
   }
 }
 
-resource "google_secret_manager_secret_version" "db_password" {
-  secret      = google_secret_manager_secret.db_password.id
-  secret_data = random_password.db_password.result
-}
-
 resource "google_secret_manager_secret" "jwt_signing_key" {
   secret_id = "jwt-signing-key"
   replication {
     auto {}
   }
-}
-
-resource "google_secret_manager_secret_version" "jwt_signing_key" {
-  secret      = google_secret_manager_secret.jwt_signing_key.id
-  secret_data = random_password.jwt_signing_key.result
 }
 
 resource "google_sql_database_instance" "main" {
@@ -63,5 +45,11 @@ resource "google_sql_database" "taskboard" {
 resource "google_sql_user" "app" {
   name     = "app"
   instance = google_sql_database_instance.main.name
-  password = random_password.db_password.result
+  # Bootstrap value only. Real password is set out-of-band via
+  # `gcloud sql users set-password` to match Secret Manager.
+  password = "bootstrap-replaced-by-gcloud"
+
+  lifecycle {
+    ignore_changes = [password]
+  }
 }

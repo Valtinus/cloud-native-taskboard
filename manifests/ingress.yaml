@@ -1,0 +1,26 @@
+apiVersion: networking.gke.io/v1
+kind: ManagedCertificate
+metadata:
+  name: taskboard-cert
+  namespace: taskboard
+spec:
+  domains:
+    - cloud-native-taskboard.hu
+    - www.cloud-native-taskboard.hu
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: taskboard-ingress
+  namespace: taskboard
+  annotations:
+    kubernetes.io/ingress.class: "gce"
+    kubernetes.io/ingress.global-static-ip-name: "taskboard-ip"
+    kubernetes.io/ingress.allow-http: "false"
+    networking.gke.io/managed-certificates: "taskboard-cert"
+spec:
+  defaultBackend:
+    service:
+      name: frontend
+      port:
+        number: 80

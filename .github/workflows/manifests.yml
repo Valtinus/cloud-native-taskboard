@@ -1,0 +1,82 @@
+name: Apply Manifests
+
+on:
+  push:
+    branches: [main]
+    paths: ["manifests/**", ".github/workflows/manifests.yml"]
+  pull_request:
+    paths: ["manifests/**"]
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+
+env:
+  REGION: europe-west1
+  PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+  CLUSTER: taskboard-cluster
+
+jobs:
+  render-and-diff:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.DEPLOYER_SA }}
+
+      - name: Look up runtime values
+        id: vars
+        run: |
+          DB_HOST=$(gcloud sql instances describe taskboard-postgres \
+            --project="$PROJECT_ID" --format='value(ipAddresses[0].ipAddress)')
+          PODS_GSA_EMAIL="taskboard-pods@${PROJECT_ID}.iam.gserviceaccount.com"
+          REGISTRY="${REGION}-docker.pkg.dev/${PROJECT_ID}/taskboard"
+          echo "DB_HOST=$DB_HOST"             >> "$GITHUB_OUTPUT"
+          echo "PODS_GSA_EMAIL=$PODS_GSA_EMAIL" >> "$GITHUB_OUTPUT"
+          echo "REGISTRY=$REGISTRY"           >> "$GITHUB_OUTPUT"
+
+      - name: Render manifests (envsubst)
+        env:
+          DB_HOST: ${{ steps.vars.outputs.DB_HOST }}
+          PODS_GSA_EMAIL: ${{ steps.vars.outputs.PODS_GSA_EMAIL }}
+          REGISTRY: ${{ steps.vars.outputs.REGISTRY }}
+          PROJECT_ID: ${{ env.PROJECT_ID }}
+        run: |
+          mkdir -p rendered
+          for f in manifests/*.yaml; do
+            envsubst '${DB_HOST} ${PODS_GSA_EMAIL} ${REGISTRY} ${PROJECT_ID}' \
+              < "$f" > "rendered/$(basename "$f")"
+          done
+
+      - name: Get GKE credentials
+        uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: ${{ env.CLUSTER }}
+          location: ${{ env.REGION }}
+
+      - name: kubectl diff (PR only)
+        if: github.event_name == 'pull_request'
+        run: kubectl diff -k rendered/ || true
+
+      - name: kubectl apply (main / dispatch only)
+        if: github.event_name != 'pull_request'
+        run: |
+          # Preserve image tags set by deploy.yml — apply only non-image fields.
+          # Strategy: apply everything except Deployments, then apply Deployments
+          # with `kubectl apply --prune-allowlist` excluded so `kubectl set image`
+          # state survives. Simplest: apply all, but explicitly re-pin current
+          # image tags into the rendered Deployments first.
+          for d in users-service tasks-service api-gateway frontend; do
+            current=$(kubectl -n taskboard get deployment "$d" \
+              -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || true)
+            if [ -n "$current" ]; then
+              sed -i "s|image: .*/${d}:bootstrap|image: ${current}|" rendered/deployments.yaml
+            fi
+          done
+          kubectl apply -k rendered/
