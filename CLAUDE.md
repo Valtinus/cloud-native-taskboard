@@ -83,7 +83,7 @@ Key invariants enforced in service code (not SQL):
 
 In docker-compose, all secrets are plain env vars (`dev` / `dev-only-not-for-prod-please-rotate`).
 
-In prod, the K8s `Secret` objects `db-credentials` and `jwt-signing-key` are created by the CSI driver from Secret Manager at pod startup — the Go code sees the same env var names in both environments.
+In prod, the CSI driver writes secret values as files at `/mnt/secrets-store/<name>` in each pod, sourced from Google Secret Manager via Workload Identity. The Go code uses a `secretValue` helper that reads the file path from `<name>_FILE` env vars and falls back to the bare env var in dev — so the rest of the code is identical in both environments. Secret values never land in a Kubernetes `Secret` object or in etcd.
 
 ## Key technology choices (settled — do not re-litigate)
 

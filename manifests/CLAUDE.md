@@ -36,15 +36,19 @@ Deployments reference `${REGISTRY}/<service>:bootstrap`. `manifests.yml` rewrite
 
 Do not pin specific git-SHA tags here — that breaks the separation between topology (manifests) and rollout (deploy).
 
-## Secrets — CSI driver, not Terraform
+## Secrets — CSI file mount, not K8s Secrets
 
-The `SecretProviderClass` `taskboard-secrets` declares two Secret Manager sources. When any pod mounts the CSI volume:
+The `SecretProviderClass` `taskboard-secrets` declares two Secret Manager sources. When a pod mounts the CSI volume:
 
 1. CSI driver authenticates as `taskboard-pods` GSA via Workload Identity.
 2. Pulls `db-password` and `jwt-signing-key` from Secret Manager.
-3. `secretObjects:` block synthesizes K8s `Secret` objects (`db-credentials`, `jwt-signing-key`) so existing `valueFrom.secretKeyRef` env wiring works unchanged.
+3. Writes them as files at `/mnt/secrets-store/db-password` and `/mnt/secrets-store/jwt-signing-key` on the pod.
 
-Pods that don't need a particular secret simply omit the env var — `tasks-service` does not reference `jwt-signing-key` for this reason. (Per-service GSA isolation is intentionally not implemented; this is a uni project.)
+The Go code reads each value via a `secretValue` helper that prefers a file path from `*_FILE` env vars and falls back to the bare env var in dev. Manifests pass `DB_PASSWORD_FILE=/mnt/secrets-store/db-password` and `JWT_SIGNING_KEY_FILE=/mnt/secrets-store/jwt-signing-key`. Nothing ever lands in a Kubernetes `Secret` object in etcd.
+
+The GKE managed Secret Manager addon does **not** support `secretObjects:` sync to K8s Secrets — that's why we use the file mount path. (If you ever need true K8s Secret sync, install the upstream `secrets-store-csi-driver` Helm chart instead of the GKE addon.)
+
+Pods that don't need a particular secret simply omit the `*_FILE` env var — `tasks-service` does not reference `jwt-signing-key` for this reason. The CSI volume still mounts all secrets to disk, but the Go code only reads what it asks for. (Per-secret CSI volumes would give file-level isolation but add manifest churn; intentionally not implemented at this scope.)
 
 ## TLS — Google-managed certificate
 

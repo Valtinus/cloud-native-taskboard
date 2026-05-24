@@ -27,11 +27,23 @@ func newProxy(rawURL string) *httputil.ReverseProxy {
 	return httputil.NewSingleHostReverseProxy(target)
 }
 
+// secretValue returns env var `name`, or the contents of the file at env var
+// `name+"_FILE"` if that path is set. Prod uses *_FILE (CSI-mounted from
+// Secret Manager); dev uses the bare env var (docker-compose).
+func secretValue(name string) string {
+	if path := os.Getenv(name + "_FILE"); path != "" {
+		if data, err := os.ReadFile(path); err == nil {
+			return strings.TrimSpace(string(data))
+		}
+	}
+	return os.Getenv(name)
+}
+
 func main() {
 	s := &server{
 		usersProxy: newProxy(os.Getenv("USERS_SERVICE_URL")),
 		tasksProxy: newProxy(os.Getenv("TASKS_SERVICE_URL")),
-		key:        []byte(os.Getenv("JWT_SIGNING_KEY")),
+		key:        []byte(secretValue("JWT_SIGNING_KEY")),
 	}
 
 	mux := http.NewServeMux()
