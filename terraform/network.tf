@@ -36,3 +36,9 @@ resource "google_service_networking_connection" "private_service" {
   service                 = "servicenetworking.googleapis.com"
   reserved_peering_ranges = [google_compute_global_address.private_service_range.name]
 }
+
+# Static external IP for the Ingress. Pinned by name from manifests/ingress.yaml
+# so the LB IP survives Ingress recreation and DNS doesn't have to change.
+resource "google_compute_global_address" "taskboard_ip" {
+  name = "taskboard-ip"
+}

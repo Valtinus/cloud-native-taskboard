@@ -388,18 +388,18 @@ services:
 ```
 project-root/
 ├── .github/workflows/
-│   ├── tofu.yml              # infra pipeline (tofu plan/apply)
+│   ├── manifests.yml         # K8s topology apply (kubectl apply -k)
 │   └── deploy.yml            # app build + deploy to GKE
 ├── terraform/
 │   ├── main.tf               # provider, backend
 │   ├── variables.tf
 │   ├── outputs.tf
-│   ├── network.tf            # VPC, subnet, private service access
-│   ├── gke.tf                # Autopilot cluster
-│   ├── database.tf           # Cloud SQL + secrets
+│   ├── network.tf            # VPC, subnet, private service access, static Ingress IP
+│   ├── gke.tf                # Autopilot cluster (with Secret Manager CSI addon)
+│   ├── database.tf           # Cloud SQL + empty Secret Manager containers
 │   ├── registry.tf           # Artifact Registry
-│   ├── iam.tf                # Workload Identity Federation for GitHub
-│   └── kubernetes.tf         # k8s namespace, deployments, services, ingress
+│   └── iam.tf                # WIF + deployer SA + pod runtime GSA
+├── manifests/                # K8s YAML (namespace, configmap, SPC, deployments, services, ingress)
 ├── services/
 │   ├── api-gateway/
 │   │   ├── cmd/server/main.go
@@ -579,18 +579,26 @@ This is the longest phase. Build it in layers, applying after each layer works.
 
 **Goal**: `git push` to main automatically builds, tests, and deploys.
 
-### 3a. OpenTofu workflow (`.github/workflows/tofu.yml`)
-Triggers: push or PR affecting `terraform/**`.
+### 3a. Infrastructure changes — local, not CI
+Infrastructure is provisioned by running `tofu apply` locally from an admin workstation. There is no CI workflow for Terraform: the CI deployer SA is intentionally narrow (no project-wide read/write) so secret values cannot be exfiltrated and infra cannot be mutated from a compromised GitHub Action. Plan/apply ritual:
+
+```bash
+cd terraform/
+tofu fmt
+tofu plan
+tofu apply
+```
+
+### 3a-bis. Manifests workflow (`.github/workflows/manifests.yml`)
+Triggers: push to main affecting `manifests/**`; PR affecting `manifests/**`.
 
 Steps:
 - Checkout
-- Authenticate via Workload Identity Federation (`google-github-actions/auth`)
-- Install OpenTofu via `opentofu/setup-opentofu` action
-- `tofu fmt -check`
-- `tofu init`
-- `tofu validate`
-- `tofu plan` (always; comment plan to PR if it's a PR)
-- `tofu apply -auto-approve` (only on push to main)
+- Authenticate via Workload Identity Federation
+- Look up runtime values (`DB_HOST` from `gcloud sql instances describe`, derive `PODS_GSA_EMAIL` and `REGISTRY` from `PROJECT_ID`)
+- `envsubst` placeholders in `manifests/*.yaml`
+- Preserve current image tags (read live Deployment images and rewrite `:bootstrap` placeholders)
+- `kubectl apply -k rendered/` (on push to main); `kubectl diff` only on PR
 
 ### 3b. App deploy workflow (`.github/workflows/deploy.yml`)
 Triggers: push to main affecting `services/**`.

@@ -23,7 +23,17 @@ output "deployer_sa_email" {
   value       = google_service_account.github_deployer.email
 }
 
-output "load_balancer_ip" {
-  description = "External IP of the frontend LoadBalancer (may take a few minutes after apply)"
-  value       = try(kubernetes_ingress_v1.frontend.status[0].load_balancer[0].ingress[0].ip, "pending")
+output "pods_gsa_email" {
+  description = "Pod runtime GSA — used by CSI driver via Workload Identity (no manual GitHub Actions var needed; manifests.yml derives it from PROJECT_ID)"
+  value       = google_service_account.taskboard_pods.email
+}
+
+output "ingress_ip" {
+  description = "Static external IP for the Ingress. Point cloud-native-taskboard.hu A records here."
+  value       = google_compute_global_address.taskboard_ip.address
+}
+
+output "db_private_ip" {
+  description = "Private IP of Cloud SQL — injected into the app-config ConfigMap by manifests.yml"
+  value       = google_sql_database_instance.main.private_ip_address
 }

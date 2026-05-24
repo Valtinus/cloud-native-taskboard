@@ -22,6 +22,9 @@ resource "google_iam_workload_identity_pool_provider" "github" {
   attribute_condition = "attribute.repository == \"${var.github_repo}\""
 }
 
+# ── CI/CD service account (GitHub Actions) ───────────────────────────────────
+# Narrow set: can push images, deploy to GKE, manage state bucket, and add new
+# Secret Manager versions (rotate). CANNOT read secret values.
 resource "google_service_account" "github_deployer" {
   account_id   = "github-deployer"
   display_name = "GitHub Actions Deployer"
@@ -39,22 +42,31 @@ resource "google_project_iam_member" "deployer_gke" {
   member  = "serviceAccount:${google_service_account.github_deployer.email}"
 }
 
-resource "google_project_iam_member" "deployer_editor" {
+# Read-only on Cloud SQL — manifests.yml looks up the DB private IP via
+# `gcloud sql instances describe` to inject into the ConfigMap.
+resource "google_project_iam_member" "deployer_cloudsql_viewer" {
   project = var.project_id
-  role    = "roles/editor"
+  role    = "roles/cloudsql.viewer"
   member  = "serviceAccount:${google_service_account.github_deployer.email}"
 }
 
-resource "google_project_iam_member" "deployer_iam_admin" {
-  project = var.project_id
-  role    = "roles/iam.securityAdmin"
-  member  = "serviceAccount:${google_service_account.github_deployer.email}"
+resource "google_storage_bucket_iam_member" "deployer_state_bucket" {
+  bucket = var.state_bucket
+  role   = "roles/storage.objectAdmin"
+  member = "serviceAccount:${google_service_account.github_deployer.email}"
 }
 
-resource "google_project_iam_member" "deployer_secret_manager" {
-  project = var.project_id
-  role    = "roles/secretmanager.admin"
-  member  = "serviceAccount:${google_service_account.github_deployer.email}"
+# Per-secret version-adder (rotation in CI), no read access.
+resource "google_secret_manager_secret_iam_member" "deployer_db_password" {
+  secret_id = google_secret_manager_secret.db_password.secret_id
+  role      = "roles/secretmanager.secretVersionAdder"
+  member    = "serviceAccount:${google_service_account.github_deployer.email}"
+}
+
+resource "google_secret_manager_secret_iam_member" "deployer_jwt" {
+  secret_id = google_secret_manager_secret.jwt_signing_key.secret_id
+  role      = "roles/secretmanager.secretVersionAdder"
+  member    = "serviceAccount:${google_service_account.github_deployer.email}"
 }
 
 resource "google_service_account_iam_member" "github_wif_binding" {
@@ -63,8 +75,28 @@ resource "google_service_account_iam_member" "github_wif_binding" {
   member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/${var.github_repo}"
 }
 
-resource "google_storage_bucket_iam_member" "deployer_state_bucket" {
-  bucket = var.state_bucket
-  role   = "roles/storage.objectAdmin"
-  member = "serviceAccount:${google_service_account.github_deployer.email}"
+# ── Pod runtime service account (Workload Identity) ──────────────────────────
+# Mounted by the K8s ServiceAccount `taskboard/taskboard-pods`. The CSI driver
+# uses this identity to fetch Secret Manager values into pods at startup.
+resource "google_service_account" "taskboard_pods" {
+  account_id   = "taskboard-pods"
+  display_name = "TaskBoard pod runtime SA (Workload Identity)"
+}
+
+resource "google_secret_manager_secret_iam_member" "pods_db_password" {
+  secret_id = google_secret_manager_secret.db_password.secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.taskboard_pods.email}"
+}
+
+resource "google_secret_manager_secret_iam_member" "pods_jwt" {
+  secret_id = google_secret_manager_secret.jwt_signing_key.secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.taskboard_pods.email}"
+}
+
+resource "google_service_account_iam_member" "pods_workload_identity" {
+  service_account_id = google_service_account.taskboard_pods.name
+  role               = "roles/iam.workloadIdentityUser"
+  member             = "serviceAccount:${var.project_id}.svc.id.goog[taskboard/taskboard-pods]"
 }
