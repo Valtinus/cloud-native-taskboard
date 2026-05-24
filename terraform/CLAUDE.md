@@ -26,7 +26,7 @@ The state bucket is created manually once (it cannot bootstrap itself). Its name
 | `main.tf` | Provider config (google + google-beta only), GCS backend |
 | `variables.tf` | Input variables (project_id, region, state_bucket, github_repo) |
 | `outputs.tf` | Cluster info, registry URL, WIF provider, deployer SA, pods GSA, ingress IP, DB private IP |
-| `network.tf` | VPC, subnet, secondary IP ranges, Private Service Access, static Ingress IP |
+| `network.tf` | VPC, subnet, secondary IP ranges, Private Service Access, static Ingress IP, Cloud DNS zone + A records |
 | `gke.tf` | GKE Autopilot cluster (Secret Manager CSI addon enabled) |
 | `database.tf` | Cloud SQL instance + database + user; **empty** Secret Manager containers |
 | `registry.tf` | Artifact Registry repository (`taskboard`) |
@@ -54,7 +54,17 @@ taskboard-private-service-range
 taskboard-ip
 ```
 
-Artifact Registry repo ID: `taskboard`. Secret Manager secret IDs: `db-password`, `jwt-signing-key` (empty containers; values seeded via `scripts/bootstrap-secrets.sh`).
+Artifact Registry repo ID: `taskboard`. Secret Manager secret IDs: `db-password`, `jwt-signing-key` (empty containers; values seeded via `scripts/bootstrap-secrets.sh`). Cloud DNS zone name: `cloud-native-taskboard` (manages `cloud-native-taskboard.hu` and `www.cloud-native-taskboard.hu` A records → `taskboard-ip`).
+
+## DNS — registrar handoff (manual, one-time)
+
+Terraform manages the Cloud DNS zone and the two A records, but it cannot reach the external `.hu` registrar where the domain is registered. After first apply:
+
+1. `tofu output dns_nameservers` — copy the 4 Google nameservers.
+2. Log into the registrar's panel and set the domain's NS records to those 4 nameservers.
+3. Propagation can take 1–48h at the TLD level.
+
+Once the registrar's NS records point at the zone, Terraform is the only thing that needs to change DNS afterwards. To add a TXT record (e.g. for domain verification), add another `google_dns_record_set` resource — don't touch the console.
 
 ## Variables
 

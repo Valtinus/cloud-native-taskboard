@@ -42,3 +42,29 @@ resource "google_service_networking_connection" "private_service" {
 resource "google_compute_global_address" "taskboard_ip" {
   name = "taskboard-ip"
 }
+
+# ── Public DNS ───────────────────────────────────────────────────────────────
+# Cloud DNS zone + A records for the public domain. The registrar's NS records
+# must be pointed at this zone's Google nameservers manually (see the
+# `dns_nameservers` output) — Terraform can't reach the external registrar.
+resource "google_dns_managed_zone" "taskboard" {
+  name        = "cloud-native-taskboard"
+  dns_name    = "${var.domain_name}."
+  description = "Public zone for ${var.domain_name}"
+}
+
+resource "google_dns_record_set" "apex" {
+  managed_zone = google_dns_managed_zone.taskboard.name
+  name         = "${var.domain_name}."
+  type         = "A"
+  ttl          = 300
+  rrdatas      = [google_compute_global_address.taskboard_ip.address]
+}
+
+resource "google_dns_record_set" "www" {
+  managed_zone = google_dns_managed_zone.taskboard.name
+  name         = "www.${var.domain_name}."
+  type         = "A"
+  ttl          = 300
+  rrdatas      = [google_compute_global_address.taskboard_ip.address]
+}

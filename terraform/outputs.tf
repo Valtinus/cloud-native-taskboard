@@ -37,3 +37,8 @@ output "db_private_ip" {
   description = "Private IP of Cloud SQL — injected into the app-config ConfigMap by manifests.yml"
   value       = google_sql_database_instance.main.private_ip_address
 }
+
+output "dns_nameservers" {
+  description = "Google nameservers for the Cloud DNS zone. Set these as NS records at the .hu registrar."
+  value       = google_dns_managed_zone.taskboard.name_servers
+}
