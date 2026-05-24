@@ -21,6 +21,18 @@ import (
 
 var emailRE = regexp.MustCompile(`^[^@\s]+@[^@\s]+\.[^@\s]+$`)
 
+// secretValue returns env var `name`, or the contents of the file at env var
+// `name+"_FILE"` if that path is set. Prod uses *_FILE (CSI-mounted from
+// Secret Manager); dev uses the bare env var (docker-compose).
+func secretValue(name string) string {
+	if path := os.Getenv(name + "_FILE"); path != "" {
+		if data, err := os.ReadFile(path); err == nil {
+			return strings.TrimSpace(string(data))
+		}
+	}
+	return os.Getenv(name)
+}
+
 type server struct {
 	db  *pgxpool.Pool
 	key []byte
@@ -48,7 +60,7 @@ func main() {
 	dsn := fmt.Sprintf(
 		"host=%s port=%s dbname=%s user=%s password=%s sslmode=disable",
 		os.Getenv("DB_HOST"), os.Getenv("DB_PORT"),
-		os.Getenv("DB_NAME"), os.Getenv("DB_USER"), os.Getenv("DB_PASSWORD"),
+		os.Getenv("DB_NAME"), os.Getenv("DB_USER"), secretValue("DB_PASSWORD"),
 	)
 
 	pool, err := pgxpool.New(ctx, dsn)
@@ -62,7 +74,7 @@ func main() {
 		log.Fatal("migrate:", err)
 	}
 
-	s := &server{db: pool, key: []byte(os.Getenv("JWT_SIGNING_KEY"))}
+	s := &server{db: pool, key: []byte(secretValue("JWT_SIGNING_KEY"))}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.healthz)

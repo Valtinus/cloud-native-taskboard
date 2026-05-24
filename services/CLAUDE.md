@@ -45,23 +45,38 @@ mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 
 ### DB connection (users-service and tasks-service)
 
-Read config from env; password comes from `DB_PASSWORD` env var (in prod, sourced from a Kubernetes Secret):
+Read config from env. The password is the only sensitive value — pulled via the `secretValue` helper, which prefers a file mount (prod, CSI driver from Secret Manager) and falls back to the bare env var (dev / docker-compose):
 
 ```go
 dsn := fmt.Sprintf("host=%s port=%s dbname=%s user=%s password=%s sslmode=disable",
     os.Getenv("DB_HOST"), os.Getenv("DB_PORT"),
-    os.Getenv("DB_NAME"), os.Getenv("DB_USER"), os.Getenv("DB_PASSWORD"))
+    os.Getenv("DB_NAME"), os.Getenv("DB_USER"), secretValue("DB_PASSWORD"))
 pool, err := pgxpool.New(ctx, dsn)
 ```
+
+### secretValue helper (inline in each service's main.go)
+
+```go
+func secretValue(name string) string {
+    if path := os.Getenv(name + "_FILE"); path != "" {
+        if data, err := os.ReadFile(path); err == nil {
+            return strings.TrimSpace(string(data))
+        }
+    }
+    return os.Getenv(name)
+}
+```
+
+In prod, the manifest sets `DB_PASSWORD_FILE=/mnt/secrets-store/db-password` (a file written by the Secret Manager CSI driver). In dev, `docker-compose.yml` sets `DB_PASSWORD` directly — the helper falls back. Either path returns the same string to the caller.
 
 On startup: ping the DB, run `CREATE TABLE IF NOT EXISTS` migrations, then start the server. Never use an external migration tool — keep migrations inline.
 
 ### JWT signing key (users-service and api-gateway only)
 
-In docker-compose the key is in `JWT_SIGNING_KEY` env var. In K8s it is injected from the `jwt-signing-key` Secret as an env var with the same name. Read it:
+Read via the same `secretValue` helper as the DB password. In prod it comes from `JWT_SIGNING_KEY_FILE=/mnt/secrets-store/jwt-signing-key` (CSI mount); in dev from `JWT_SIGNING_KEY` env var:
 
 ```go
-signingKey := []byte(os.Getenv("JWT_SIGNING_KEY"))
+signingKey := []byte(secretValue("JWT_SIGNING_KEY"))
 ```
 
 tasks-service deliberately does NOT receive this secret.

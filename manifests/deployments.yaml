@@ -30,16 +30,10 @@ spec:
             - configMapRef:
                 name: app-config
           env:
-            - name: DB_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: db-credentials
-                  key: password
-            - name: JWT_SIGNING_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: jwt-signing-key
-                  key: key
+            - name: DB_PASSWORD_FILE
+              value: /mnt/secrets-store/db-password
+            - name: JWT_SIGNING_KEY_FILE
+              value: /mnt/secrets-store/jwt-signing-key
           volumeMounts:
             - name: secrets-store
               mountPath: /mnt/secrets-store
@@ -89,11 +83,8 @@ spec:
             - configMapRef:
                 name: app-config
           env:
-            - name: DB_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: db-credentials
-                  key: password
+            - name: DB_PASSWORD_FILE
+              value: /mnt/secrets-store/db-password
           volumeMounts:
             - name: secrets-store
               mountPath: /mnt/secrets-store
@@ -143,11 +134,8 @@ spec:
             - configMapRef:
                 name: app-config
           env:
-            - name: JWT_SIGNING_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: jwt-signing-key
-                  key: key
+            - name: JWT_SIGNING_KEY_FILE
+              value: /mnt/secrets-store/jwt-signing-key
           volumeMounts:
             - name: secrets-store
               mountPath: /mnt/secrets-store
