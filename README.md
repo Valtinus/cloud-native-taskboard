@@ -477,14 +477,7 @@ immediately rolls back to the previous image. The previous image is still in Art
 
 The scope was deliberately bounded for one university term. Real next steps, roughly ordered by impact:
 
-* **Horizontal scaling and PodDisruptionBudgets.** All four Deployments are `replicas: 1` today. Add HPA on CPU + a sensible PDB on each service so Autopilot can drain nodes without taking the app down.
 * **Multiple environments.** A `manifests/overlays/dev|prod/` Kustomize split with image tags, replica counts, and resource requests parametrised per environment. A second GCP project (or namespace) for staging would let manifest changes bake before reaching prod.
-* **Per-secret CSI volumes for true least privilege.** Today all pods mount the same CSI volume containing both secrets, even though the Go code only reads what it asks for. Splitting into per-secret `SecretProviderClass`es would make a misconfigured pod physically unable to read a secret it shouldn't.
-* **Workflow Identity binding per service.** Use distinct KSAs / GSAs per service so a compromise of `tasks-service` cannot impersonate `users-service` against Secret Manager or any other GCP API.
 * **Observability stack.** Cloud Logging is on by default; add Cloud Monitoring uptime checks against `https://cloud-native-taskboard.hu`, structured Go logs (currently stdlib `log`), a Grafana / Cloud Monitoring dashboard, and trace propagation through the gateway (OpenTelemetry).
-* **Database migrations as a first-class artefact.** Today migrations are inline `CREATE TABLE IF NOT EXISTS` in each service's `main.go`. Move to `goose` / `migrate` with versioned files under `db/migrations/`, run as a Kubernetes `Job` before each rollout.
 * **Refresh tokens and JWT key rotation.** HS256 + a 24h access token is fine for the assignment scope; a real product needs short access tokens, refresh tokens, and a key-rotation story (a key version field on the secret and a graceful overlap window in the gateway).
-* **Network policies.** Default-deny `NetworkPolicy` in the `taskboard` namespace, with explicit allows for `frontend → gateway`, `gateway → users/tasks`, and `tasks → users`. Today the cluster relies entirely on `ClusterIP`-only services and external isolation.
-* **Cost guardrails.** A `BudgetAlert` is already configured manually at $50; codify it in `iam.tf` as a `google_billing_budget` so it's not forgotten on a fresh project.
-* **GitOps for manifests.** Replace `manifests.yml`'s direct `kubectl apply` with Argo CD or Flux pointed at the `manifests/` path. Drift detection + auto-revert come for free.
 * **End-to-end browser tests in CI.** A small Playwright job in `deploy.yml` that hits the public LB after a deploy and walks the register → login → create board flow would catch broken images earlier than a `/healthz` ever can.
