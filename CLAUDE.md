@@ -93,4 +93,5 @@ In prod, the CSI driver writes secret values as files at `/mnt/secrets-store/<na
 - **Workload Identity Federation** over service account keys — no long-lived credentials
 - **Git SHA image tags** over `:latest` — immutable deploys, easy rollback
 - **bcrypt cost 12** for passwords — OWASP recommendation
+- **HPA per service** (CPU 70%, 1–5 replicas) — declarative autoscaling; replica count is owned by the HPA, so Deployments carry `resources.requests` but no `replicas:` field
 - **shadcn/ui + Tailwind CSS v3** for the frontend — components are copied into repo, zero runtime dependency

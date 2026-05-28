@@ -4,7 +4,6 @@ metadata:
   name: users-service
   namespace: taskboard
 spec:
-  replicas: 1
   selector:
     matchLabels:
       app: users-service
@@ -24,6 +23,13 @@ spec:
       containers:
         - name: users-service
           image: ${REGISTRY}/users-service:bootstrap
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
           ports:
             - containerPort: 8080
           envFrom:
@@ -57,7 +63,6 @@ metadata:
   name: tasks-service
   namespace: taskboard
 spec:
-  replicas: 1
   selector:
     matchLabels:
       app: tasks-service
@@ -77,6 +82,13 @@ spec:
       containers:
         - name: tasks-service
           image: ${REGISTRY}/tasks-service:bootstrap
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
           ports:
             - containerPort: 8080
           envFrom:
@@ -108,7 +120,6 @@ metadata:
   name: api-gateway
   namespace: taskboard
 spec:
-  replicas: 1
   selector:
     matchLabels:
       app: api-gateway
@@ -128,6 +139,13 @@ spec:
       containers:
         - name: api-gateway
           image: ${REGISTRY}/api-gateway:bootstrap
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
           ports:
             - containerPort: 8080
           envFrom:
@@ -159,7 +177,6 @@ metadata:
   name: frontend
   namespace: taskboard
 spec:
-  replicas: 1
   selector:
     matchLabels:
       app: frontend
@@ -171,6 +188,13 @@ spec:
       containers:
         - name: frontend
           image: ${REGISTRY}/frontend:bootstrap
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
           ports:
             - containerPort: 80
           livenessProbe:

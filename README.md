@@ -237,6 +237,31 @@ Images are built by the CI runner, tagged with the **exact git SHA**, and pushed
 
 Every Deployment specifies `livenessProbe` and `readinessProbe` against `/healthz`, so a container that fails to come up is restarted automatically and is not routed traffic until it's ready. Combined with `kubectl rollout status --timeout=5m` in the deploy workflow, this means a broken image fails the CI job rather than silently degrading the live service.
 
+**Horizontal autoscaling.** Each service has a `HorizontalPodAutoscaler` ([manifests/hpa.yaml](manifests/hpa.yaml)) that scales it between **1 and 5 replicas** when average CPU crosses **70%** of the container's requested CPU. For the HPA to have a denominator to measure against, every container declares `resources.requests` (backends `250m`/`512Mi`, frontend `250m`/`256Mi`); the Deployments themselves carry **no** static `replicas:` field, so replica count is owned solely by the autoscaler and a topology re-apply never resets it. On GKE Autopilot the node layer scales to fit the new pods automatically — there is nothing to provision by hand. Because Autopilot bills per pod *request*, the baseline cost is unchanged (each HPA holds one replica at idle); extra pods are billed only while load actually holds them up, bounded by `maxReplicas`. Worth noting that this scales the stateless app tier only — under heavy load the practical ceiling is Cloud SQL, not the Go pods.
+
+#### Manual scaling demo (GCP Cloud Shell)
+
+A quick way to show scaling live without generating load. Because the HPA owns the replica count, a plain `kubectl scale` is reverted within ~15s — so the clean manual lever is the autoscaler's own floor (`minReplicas`):
+
+```bash
+# Point kubectl at the cluster
+gcloud container clusters get-credentials taskboard-cluster --region europe-west1
+
+# In a second Cloud Shell tab, watch the pods live:
+kubectl get pods -n taskboard -l app=tasks-service -w
+
+# ── Scale UP ── raise the floor to 4 replicas
+kubectl patch hpa tasks-service -n taskboard --type merge -p '{"spec":{"minReplicas":4}}'
+# → 3 new tasks-service pods schedule within ~15s (Autopilot adds a node if needed)
+kubectl get hpa tasks-service -n taskboard      # REPLICAS column shows 4
+
+# ── Scale DOWN ── restore the floor to 1
+kubectl patch hpa tasks-service -n taskboard --type merge -p '{"spec":{"minReplicas":1}}'
+# → the HPA drains back to a single replica once the scale-down window settles (~5 min at idle)
+```
+
+The same up/down is visible in the Console under **Kubernetes Engine → Workloads → tasks-service** (the "Managed pods" count). For the scale-*down* to look instant during a live demo, run the restore command a few minutes before the slide — the default scale-down stabilization window holds the higher count for ~5 minutes to avoid flapping.
+
 ### Repository layout
 
 ```
@@ -284,7 +309,8 @@ All cloud infrastructure is provisioned by **OpenTofu**. Kubernetes workload top
 | `namespace.yaml`           | The `taskboard` Namespace plus the `taskboard-pods` KSA, annotated with `iam.gke.io/gcp-service-account` for Workload Identity.   |
 | `configmap.yaml`           | Non-secret runtime config: DB host/port/name/user and inter-service URLs (`http://users-service.taskboard.svc.cluster.local:8080`). |
 | `secretproviderclass.yaml` | The CSI driver config that tells GKE to pull `db-password` and `jwt-signing-key` from Secret Manager and write them to `/mnt/secrets-store/<name>`. |
-| `deployments.yaml`         | All four Deployments. Each pod mounts the CSI volume read-only; only the services that need a secret reference the matching `*_FILE` env var (tasks-service deliberately does not get the JWT key). All pods expose `/healthz` for liveness + readiness probes. |
+| `deployments.yaml`         | All four Deployments. Each pod mounts the CSI volume read-only; only the services that need a secret reference the matching `*_FILE` env var (tasks-service deliberately does not get the JWT key). Each container carries `resources.requests` and **no** static `replicas:` (the HPA owns that). All pods expose `/healthz` for liveness + readiness probes. |
+| `hpa.yaml`                 | A `HorizontalPodAutoscaler` per service: scales `1→5` replicas on CPU, targeting `70%` of the requested CPU. Replica count is owned here, not in the Deployment, so a manifest re-apply never fights the autoscaler. |
 | `services.yaml`            | All four `Service` objects. Three backends are `ClusterIP`; the frontend is `NodePort` so the GCE Ingress can target it.            |
 | `ingress.yaml`             | The single `Ingress` (annotated to bind to the static IP `taskboard-ip` and the `ManagedCertificate`) plus the `ManagedCertificate` resource for `cloud-native-taskboard.hu` and `www`. HTTP is disabled (`kubernetes.io/ingress.allow-http: "false"`). |
 
@@ -477,7 +503,8 @@ immediately rolls back to the previous image. The previous image is still in Art
 
 The scope was deliberately bounded for one university term. Real next steps, roughly ordered by impact:
 
-* **Multiple environments.** A `manifests/overlays/dev|prod/` Kustomize split with image tags, replica counts, and resource requests parametrised per environment. A second GCP project (or namespace) for staging would let manifest changes bake before reaching prod.
+* **Multiple environments.** A `manifests/overlays/dev|prod/` Kustomize split with image tags, HPA bounds, and resource requests (all currently single-valued) parametrised per environment. A second GCP project (or namespace) for staging would let manifest changes bake before reaching prod.
+* **Smarter autoscaling.** The current HPA scales on CPU only. Custom/external metrics (requests-per-second via the Stackdriver adapter, or queue depth) would track user-facing load more directly than CPU, and a `PodDisruptionBudget` plus tuned scale-down stabilization would smooth behaviour under bursty traffic.
 * **Observability stack.** Cloud Logging is on by default; add Cloud Monitoring uptime checks against `https://cloud-native-taskboard.hu`, structured Go logs (currently stdlib `log`), a Grafana / Cloud Monitoring dashboard, and trace propagation through the gateway (OpenTelemetry).
 * **Refresh tokens and JWT key rotation.** HS256 + a 24h access token is fine for the assignment scope; a real product needs short access tokens, refresh tokens, and a key-rotation story (a key version field on the secret and a graceful overlap window in the gateway).
 * **End-to-end browser tests in CI.** A small Playwright job in `deploy.yml` that hits the public LB after a deploy and walks the register → login → create board flow would catch broken images earlier than a `/healthz` ever can.

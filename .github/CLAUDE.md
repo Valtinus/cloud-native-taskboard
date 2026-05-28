@@ -56,7 +56,7 @@ kubectl rollout undo deployment/users-service -n taskboard
 - **Runtime value injection** — `envsubst` substitutes `${PROJECT_ID}`, `${DB_HOST}`, `${PODS_GSA_EMAIL}`, `${REGISTRY}` at apply time. `DB_HOST` is looked up via `gcloud sql instances describe`; the rest derive from `vars.GCP_PROJECT_ID`. Add new placeholders to the `envsubst '...'` whitelist when adding new templated values.
 - **Image preservation** — before `kubectl apply -k`, the workflow reads each Deployment's current image and rewrites the rendered manifest so `apply` does not roll back the live image set by `deploy.yml`.
 - **PR previews** — pull requests run `kubectl diff` only (no apply); main pushes apply.
-- **Ownership** — this workflow owns Namespace, ConfigMap, SecretProviderClass, Deployment specs (except image tag), Service, Ingress, ManagedCertificate. `deploy.yml` owns image tags only. Terraform owns the cluster, IP, secrets containers, and IAM (applied locally).
+- **Ownership** — this workflow owns Namespace, ConfigMap, SecretProviderClass, Deployment specs (except image tag and replica count), HorizontalPodAutoscaler, Service, Ingress, ManagedCertificate. `deploy.yml` owns image tags only; the HPA owns replica count at runtime. Terraform owns the cluster, IP, secrets containers, and IAM (applied locally).
 
 ## Why no infra workflow?
 

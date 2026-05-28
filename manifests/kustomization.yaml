@@ -8,5 +8,6 @@ resources:
   - configmap.yaml
   - secretproviderclass.yaml
   - deployments.yaml
+  - hpa.yaml
   - services.yaml
   - ingress.yaml
